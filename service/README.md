@@ -21,6 +21,13 @@ Bot 评论回当前 Issue
 3. 治理结果 Schema。
 4. Schema 单元测试样例。
 
+当前已完成 P1 仓库上下文初始化：
+
+1. CodeGraph 初始化或同步检查。
+2. 项目知识图谱读取和刷新。
+3. Issue 关键词提取和相关源码上下文查询。
+4. `IssueGovernanceService` 输入准备阶段接入仓库上下文。
+
 ## 本地环境变量
 
 复制 `.env.example` 为 `.env` 后填写真实值。
