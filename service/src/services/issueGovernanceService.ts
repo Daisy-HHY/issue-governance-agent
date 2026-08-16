@@ -1,13 +1,39 @@
 import { queryRelevantContext } from "../repository/repositoryContext.js";
+import { governanceResponseSchema, governanceResultSchema } from "../schemas/governanceSchemas.js";
+import type {
+  GovernanceMode,
+  GovernanceResponse,
+  GovernanceResult,
+  GovernanceTask,
+  NormalizedIssue,
+  RawIssue,
+  RiskLevel,
+  SplitTask
+} from "../schemas/governanceSchemas.js";
 import type {
   ContextSource,
   IssueContextInput,
   RelevantRepositoryContext
 } from "../repository/repositoryContext.js";
-import type { RawIssue } from "../schemas/governanceSchemas.js";
+
+const DEFAULT_TASKS: GovernanceTask[] = [
+  "dedupe",
+  "clarify",
+  "split_tasks",
+  "generate_tests",
+  "risk_report"
+];
+
+const BUG_WORDS = ["bug", "error", "fail", "failed", "blank", "crash", "exception", "报错", "失败", "异常"];
+const FEATURE_WORDS = ["feature", "support", "add", "新增", "支持", "需求"];
+const DOC_WORDS = ["docs", "readme", "文档", "说明"];
+const QUESTION_WORDS = ["how", "why", "what", "如何", "为什么", "吗", "?"];
 
 export interface IssueGovernanceServiceOptions {
   repositoryPath?: string;
+  tasks?: GovernanceTask[];
+  mode?: GovernanceMode;
+  candidateIssues?: RawIssue[];
 }
 
 export interface PreparedGovernanceInput {
@@ -23,7 +49,7 @@ export type RepositoryContextLoader = (
 ) => Promise<RelevantRepositoryContext>;
 
 /**
- * Prepares issue governance input before model analysis.
+ * Prepares and runs issue governance analysis.
  */
 export class IssueGovernanceService {
   constructor(private readonly repositoryContextLoader: RepositoryContextLoader = queryRelevantContext) {}
@@ -49,6 +75,38 @@ export class IssueGovernanceService {
       promptContext: buildPromptContext(issue, repositoryContext),
       contextSources: repositoryContext?.contextSources ?? []
     };
+  }
+
+  /**
+   * Returns a deterministic governance result that can later be replaced by LLM analysis.
+   */
+  async governIssue(
+    issue: RawIssue,
+    options: IssueGovernanceServiceOptions = {}
+  ): Promise<GovernanceResponse> {
+    const prepared = await this.prepareInput(issue, options);
+    const tasks = options.tasks ?? DEFAULT_TASKS;
+    const result = buildGovernanceResult(
+      prepared.issue,
+      options.candidateIssues ?? [],
+      tasks,
+      prepared.repositoryContext
+    );
+    const response = {
+      repository: issue.repo,
+      mode: options.mode ?? "analyze_only",
+      summary: {
+        analyzedIssues: 1,
+        duplicateGroups: result.dedupe.isDuplicate ? 1 : 0,
+        unclearIssues: result.clarification.needed ? 1 : 0,
+        highRiskIssues: ["high", "critical"].includes(result.riskReport.level) ? 1 : 0,
+        suggestedTasks: result.splitTasks.length,
+        testPoints: result.testPoints.length
+      },
+      issues: [result]
+    };
+
+    return governanceResponseSchema.parse(response);
   }
 }
 
@@ -91,6 +149,271 @@ export function buildPromptContext(
   }
 
   return sections.join("\n");
+}
+
+function buildGovernanceResult(
+  issue: RawIssue,
+  candidates: RawIssue[],
+  tasks: GovernanceTask[],
+  repositoryContext: RelevantRepositoryContext | null
+): GovernanceResult {
+  const normalized = normalizeIssue(issue);
+  const dedupe = tasks.includes("dedupe") ? detectDuplicate(issue, candidates) : emptyDedupe();
+  const clarification = tasks.includes("clarify") ? buildClarification(normalized) : emptyClarification();
+  const splitTasks = tasks.includes("split_tasks") ? buildSplitTasks(normalized, clarification.needed) : [];
+  const riskReport = tasks.includes("risk_report")
+    ? buildRiskReport(normalized, repositoryContext)
+    : { level: "low" as RiskLevel, reasons: [], impactScope: [], suggestion: "" };
+  const testPoints = tasks.includes("generate_tests") ? buildTestPoints(normalized, riskReport.level) : [];
+  const proposedActions = buildProposedActions(issue.number, clarification.commentDraft);
+
+  return governanceResultSchema.parse({
+    issueNumber: issue.number,
+    title: issue.title,
+    classification: {
+      type: normalized.issueType,
+      module: normalized.module,
+      clarityScore: normalized.clarityScore,
+      riskLevel: riskReport.level
+    },
+    dedupe,
+    clarification,
+    splitTasks,
+    testPoints,
+    riskReport,
+    proposedActions
+  });
+}
+
+function normalizeIssue(issue: RawIssue): NormalizedIssue {
+  const text = `${issue.title}\n${issue.body}\n${issue.labels.join(" ")}`;
+  const lowered = text.toLowerCase();
+  const issueType = includesAny(lowered, BUG_WORDS)
+    ? "bug"
+    : includesAny(lowered, FEATURE_WORDS)
+      ? "feature"
+      : includesAny(lowered, DOC_WORDS)
+        ? "docs"
+        : includesAny(lowered, QUESTION_WORDS)
+          ? "question"
+          : "unknown";
+  const missingFields = getMissingFields(issueType, lowered);
+
+  return {
+    repo: issue.repo,
+    number: issue.number,
+    title: issue.title,
+    summary: issue.body ? firstLine(issue.body) : issue.title,
+    issueType,
+    module: inferModule(issue),
+    evidence: [issue.title, ...issue.labels].filter(Boolean),
+    missingFields,
+    clarityScore: Math.max(0.1, Math.min(1, 1 - missingFields.length * 0.2))
+  };
+}
+
+function getMissingFields(issueType: NormalizedIssue["issueType"], loweredText: string): string[] {
+  if (issueType === "bug") {
+    return [
+      !includesAny(loweredText, ["step", "reproduce", "复现", "步骤"]) ? "复现步骤" : "",
+      !includesAny(loweredText, ["expected", "预期"]) ? "预期结果" : "",
+      !includesAny(loweredText, ["actual", "实际"]) ? "实际结果" : ""
+    ].filter(Boolean);
+  }
+
+  if (issueType === "feature") {
+    return [
+      !includesAny(loweredText, ["acceptance", "验收", "标准"]) ? "验收标准" : "",
+      !includesAny(loweredText, ["scenario", "场景"]) ? "使用场景" : ""
+    ].filter(Boolean);
+  }
+
+  return loweredText.length < 80 ? ["更多上下文"] : [];
+}
+
+function detectDuplicate(issue: RawIssue, candidates: RawIssue[]): GovernanceResult["dedupe"] {
+  const currentTokens = tokenize(`${issue.title} ${issue.body}`);
+  const scored = candidates
+    .filter((candidate) => candidate.number !== issue.number)
+    .map((candidate) => ({
+      issueNumber: candidate.number,
+      confidence: jaccard(currentTokens, tokenize(`${candidate.title} ${candidate.body}`)),
+      reason: `标题或正文与 #${candidate.number} 存在相似关键词`
+    }))
+    .filter((candidate) => candidate.confidence >= 0.35)
+    .sort((left, right) => right.confidence - left.confidence)
+    .slice(0, 3);
+
+  return {
+    isDuplicate: scored.length > 0 && scored[0].confidence >= 0.55,
+    canonicalIssue: scored.length > 0 && scored[0].confidence >= 0.55 ? scored[0].issueNumber : null,
+    duplicateCandidates: scored,
+    confidence: scored[0]?.confidence ?? 0,
+    reason: scored.length > 0 ? "发现相似 Issue 候选，需人工复核后再处理。" : "未发现足够相似的候选 Issue。"
+  };
+}
+
+function buildClarification(normalized: NormalizedIssue): GovernanceResult["clarification"] {
+  const questions = normalized.missingFields.map((field) => `请补充${field}，方便维护者判断影响范围。`);
+  const commentDraft = questions.length > 0 ? `为了继续治理该 Issue，请补充：\n${questions.join("\n")}` : "";
+
+  return {
+    needed: questions.length > 0,
+    missingFields: normalized.missingFields,
+    questions,
+    commentDraft
+  };
+}
+
+function buildSplitTasks(normalized: NormalizedIssue, needsClarification: boolean): SplitTask[] {
+  if (needsClarification) {
+    return [
+      {
+        title: "补充 Issue 关键信息",
+        type: "unknown",
+        description: "当前信息不足，先补充上下文再拆开发任务。",
+        dependencies: [],
+        acceptanceCriteria: ["Issue 描述包含复现、预期、实际或验收标准等关键信息"]
+      }
+    ];
+  }
+
+  return [
+    {
+      title: `分析 ${normalized.module} 模块影响范围`,
+      type: "backend",
+      description: normalized.summary,
+      dependencies: [],
+      acceptanceCriteria: ["确认影响文件、接口或用户路径", "明确回归验证范围"]
+    },
+    {
+      title: "补充治理结果回归测试",
+      type: "test",
+      description: "覆盖正常路径、异常输入和回归风险。",
+      dependencies: [`分析 ${normalized.module} 模块影响范围`],
+      acceptanceCriteria: ["关键风险有对应测试点", "测试失败时能定位原因"]
+    }
+  ];
+}
+
+function buildTestPoints(normalized: NormalizedIssue, riskLevel: RiskLevel): string[] {
+  const points = [
+    `验证 ${normalized.module} 模块正常路径。`,
+    "验证无效输入或信息缺失时返回清晰错误。",
+    "验证本次修改不会破坏既有 Schema 和评论渲染。"
+  ];
+
+  if (normalized.issueType === "bug") {
+    points.unshift("按 Issue 描述复现问题，并验证修复后的回归路径。");
+  }
+
+  if (["high", "critical"].includes(riskLevel)) {
+    points.push("补充权限、幂等和失败重试场景验证。");
+  }
+
+  return points;
+}
+
+function buildRiskReport(
+  normalized: NormalizedIssue,
+  repositoryContext: RelevantRepositoryContext | null
+): GovernanceResult["riskReport"] {
+  const reasons: string[] = [];
+
+  if (normalized.clarityScore < 0.5) {
+    reasons.push("Issue 信息不足，存在误判影响范围的风险。");
+  }
+
+  if (["webhook", "github", "auth", "permission", "token", "api"].some((word) => normalized.module.includes(word))) {
+    reasons.push("可能影响外部入口、鉴权或 GitHub 写操作链路。");
+  }
+
+  if (repositoryContext?.codeContext) {
+    reasons.push("已结合仓库上下文，后续判断应引用相关源码证据。");
+  }
+
+  const level: RiskLevel = reasons.some((reason) => reason.includes("鉴权") || reason.includes("写操作"))
+    ? "high"
+    : normalized.clarityScore < 0.5
+      ? "medium"
+      : "low";
+
+  return {
+    level,
+    reasons: reasons.length > 0 ? reasons : ["当前描述未暴露明显高风险链路。"],
+    impactScope: [normalized.module],
+    suggestion: normalized.clarityScore < 0.5 ? "先补充关键信息，再执行开发或自动化治理。" : "保持人工确认后再执行写操作。"
+  };
+}
+
+function buildProposedActions(issueNumber: number, clarificationDraft: string): GovernanceResult["proposedActions"] {
+  return clarificationDraft
+    ? [
+        {
+          actionId: `comment-${issueNumber}-clarify`,
+          type: "comment",
+          requiresApproval: true,
+          content: clarificationDraft,
+          labels: [],
+          impactScope: ["github_issue_comment"]
+        }
+      ]
+    : [];
+}
+
+function emptyDedupe(): GovernanceResult["dedupe"] {
+  return {
+    isDuplicate: false,
+    canonicalIssue: null,
+    duplicateCandidates: [],
+    confidence: 0,
+    reason: ""
+  };
+}
+
+function emptyClarification(): GovernanceResult["clarification"] {
+  return {
+    needed: false,
+    missingFields: [],
+    questions: [],
+    commentDraft: ""
+  };
+}
+
+function inferModule(issue: RawIssue): string {
+  const labels = issue.labels.map((label) => label.toLowerCase());
+  const moduleLabel = labels.find((label) => label.startsWith("module:") || label.startsWith("area:"));
+
+  if (moduleLabel) {
+    return moduleLabel.split(":")[1] || "unknown";
+  }
+
+  const text = `${issue.title} ${issue.body}`.toLowerCase();
+  const knownModules = ["webhook", "github", "uumit", "mcp", "schema", "api", "service", "repository", "auth"];
+  return knownModules.find((moduleName) => text.includes(moduleName)) ?? "unknown";
+}
+
+function includesAny(value: string, words: string[]): boolean {
+  return words.some((word) => value.includes(word));
+}
+
+function firstLine(value: string): string {
+  return value.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
+}
+
+function tokenize(value: string): Set<string> {
+  const tokens = value.toLowerCase().match(/[\p{L}\p{N}_-]{3,}/gu) ?? [];
+  return new Set(tokens);
+}
+
+function jaccard(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 || right.size === 0) {
+    return 0;
+  }
+
+  const intersection = [...left].filter((token) => right.has(token)).length;
+  const union = new Set([...left, ...right]).size;
+  return Number((intersection / union).toFixed(2));
 }
 
 function formatContextSource(source: ContextSource): string {

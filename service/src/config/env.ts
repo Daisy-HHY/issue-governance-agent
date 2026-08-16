@@ -5,6 +5,8 @@ const envSchema = z.object({
   GITHUB_APP_ID: z.string().min(1),
   GITHUB_APP_PRIVATE_KEY: z.string().min(1),
   GITHUB_WEBHOOK_SECRET: z.string().min(1),
+  GITHUB_TRIGGER_USERS: z.string().default(""),
+  GITHUB_TRIGGER_ASSOCIATIONS: z.string().default("OWNER,MEMBER,COLLABORATOR"),
   UUMIT_API_KEY: z.string().min(1),
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_MODEL: z.string().min(1).default("gpt-4.1-mini"),

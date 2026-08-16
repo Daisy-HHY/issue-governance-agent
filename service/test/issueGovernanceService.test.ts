@@ -64,4 +64,16 @@ describe("IssueGovernanceService", () => {
     expect(prepared.promptContext).toContain("Project profile summary");
     expect(prepared.promptContext).toContain("service/src/index.ts");
   });
+
+  it("returns a schema-valid governance response", async () => {
+    const service = new IssueGovernanceService();
+
+    const response = await service.governIssue(issue, {
+      tasks: ["clarify", "risk_report", "generate_tests"]
+    });
+
+    expect(response.summary.analyzedIssues).toBe(1);
+    expect(response.issues[0]?.issueNumber).toBe(issue.number);
+    expect(response.issues[0]?.proposedActions.every((action) => action.requiresApproval)).toBe(true);
+  });
 });
