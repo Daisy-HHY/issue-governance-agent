@@ -10,6 +10,7 @@ import type { AppEnv } from "./config/env.js";
  */
 export function createApp(env: AppEnv): Hono {
   const app = new Hono();
+  const repositoryPath = env.REPOSITORY_CONTEXT_PATH || undefined;
   const governanceService = new IssueGovernanceService();
   const githubClient = new GitHubClient({
     appId: env.GITHUB_APP_ID,
@@ -28,14 +29,17 @@ export function createApp(env: AppEnv): Hono {
     createGitHubWebhookRoutes({
       env,
       githubClient,
-      governanceService
+      governanceService,
+      repositoryPath
     })
   );
   app.route(
     "/api/v1",
     createUumitCapabilityRoutes({
       env,
-      governanceService
+      githubClient,
+      governanceService,
+      repositoryPath
     })
   );
 

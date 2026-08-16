@@ -11,6 +11,7 @@ export interface GitHubWebhookDeps {
   env: AppEnv;
   githubClient: GitHubClient;
   governanceService: IssueGovernanceService;
+  repositoryPath?: string;
   processedDeliveries?: Set<string>;
 }
 
@@ -97,9 +98,13 @@ export function createGitHubWebhookRoutes(deps: GitHubWebhookDeps): Hono {
     const result = await deps.governanceService.governIssue(issue, {
       tasks: command.tasks,
       candidateIssues,
-      mode: "comment_result"
+      mode: "comment_result",
+      repositoryPath: deps.repositoryPath
     });
-    const commentId = await deps.githubClient.createIssueComment(ref, renderGovernanceComment(result));
+    const commentId = await deps.githubClient.createIssueComment(
+      ref,
+      renderGovernanceComment(result)
+    );
 
     if (deliveryId) {
       processedDeliveries.add(deliveryId);
@@ -111,7 +116,11 @@ export function createGitHubWebhookRoutes(deps: GitHubWebhookDeps): Hono {
   return app;
 }
 
-export function verifyGitHubSignature(rawBody: string, secret: string, signatureHeader: string): boolean {
+export function verifyGitHubSignature(
+  rawBody: string,
+  secret: string,
+  signatureHeader: string
+): boolean {
   if (!signatureHeader.startsWith("sha256=")) {
     return false;
   }
@@ -120,7 +129,9 @@ export function verifyGitHubSignature(rawBody: string, secret: string, signature
   const expectedBuffer = Buffer.from(expected);
   const actualBuffer = Buffer.from(signatureHeader);
 
-  return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
+  return (
+    expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer)
+  );
 }
 
 function splitCsv(value: string): string[] {

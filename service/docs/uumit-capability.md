@@ -6,7 +6,7 @@ GitHub Issue 智能治理
 
 ## 能力描述
 
-输入 GitHub 仓库和 Issue 范围，返回 Issue 去重、澄清问题、任务拆分、测试点和风险报告。第一版是可人工采纳的治理建议，不执行自动关闭、自动分配或自动创建子 Issue。
+输入 GitHub 仓库和 Issue 范围，通过 GitHub App 拉取真实 Issue 后返回去重、澄清问题、任务拆分、测试点和风险报告。第一版是可人工采纳的治理建议，不执行自动关闭、自动分配或自动创建子 Issue。
 
 ## HTTP API
 
@@ -28,30 +28,42 @@ x-api-key: <UUMIT_API_KEY>
 
 ## 输入参数
 
-| 字段 | 说明 |
-|---|---|
-| `source` | 调用来源，建议填 `uumit` |
-| `requestId` | 幂等 ID，同一 ID 重试返回同一结果 |
-| `repo` | GitHub 仓库，例如 `owner/project` |
-| `issueNumber` | 单个 Issue 编号 |
-| `issueRange` | 批量范围，支持 `state`、`limit`、`labels`、`since` |
-| `tasks` | 治理任务数组 |
-| `mode` | 输出模式，默认 `analyze_only` |
-| `outputLanguage` | 输出语言，默认 `zh-CN` |
+| 字段             | 说明                                               |
+| ---------------- | -------------------------------------------------- |
+| `source`         | 调用来源，建议填 `uumit`                           |
+| `requestId`      | 幂等 ID，同一 ID 重试返回同一结果                  |
+| `repo`           | GitHub 仓库，例如 `owner/project`                  |
+| `issueNumber`    | 单个 Issue 编号                                    |
+| `issueRange`     | 批量范围，支持 `state`、`limit`、`labels`、`since` |
+| `tasks`          | 治理任务数组                                       |
+| `mode`           | 输出模式，默认 `analyze_only`                      |
+| `outputLanguage` | 输出语言，默认 `zh-CN`                             |
 
 ## 输出字段
 
-| 字段 | 说明 |
-|---|---|
-| `requestId` | 请求 ID |
-| `status` | `succeeded` / `failed` / `running` |
-| `capability` | 固定为 `github_issue_governance` |
-| `repository` | 仓库 |
-| `resultMarkdown` | 可直接展示的 Markdown |
-| `resultJson` | 结构化治理结果 |
-| `usage` | 调用统计，`billingUnit` 支持 `per_issue` 和 `per_batch` |
-| `errorCode` | 错误码 |
-| `message` | 错误说明 |
+| 字段             | 说明                                                    |
+| ---------------- | ------------------------------------------------------- |
+| `requestId`      | 请求 ID                                                 |
+| `status`         | `succeeded` / `failed` / `running`                      |
+| `capability`     | 固定为 `github_issue_governance`                        |
+| `repository`     | 仓库                                                    |
+| `resultMarkdown` | 可直接展示的 Markdown                                   |
+| `resultJson`     | 结构化治理结果                                          |
+| `usage`          | 调用统计，`billingUnit` 支持 `per_issue` 和 `per_batch` |
+| `errorCode`      | 错误码                                                  |
+| `message`        | 错误说明                                                |
+
+## GitHub 上下文要求
+
+服务需要 GitHub App 已安装到目标仓库，并能通过 `repo` 获取 installation token。缺少可用 GitHub 上下文时不会生成占位 Issue，而是返回失败响应：
+
+```json
+{
+  "status": "failed",
+  "errorCode": "GITHUB_CONTEXT_UNAVAILABLE",
+  "message": "UUMIT 请求缺少可用 GitHub App 上下文，无法真实拉取 Issue。"
+}
+```
 
 ## 调用示例
 
@@ -69,6 +81,6 @@ x-api-key: <UUMIT_API_KEY>
 
 ## 风险声明
 
-- 当前本地 MVP 未连接真实 GitHub 拉取时，会基于请求参数生成占位 Issue。
+- 当前不会用请求参数生成占位 Issue；无法真实拉取 GitHub Issue 时直接失败。
 - 治理结果是建议，不自动执行 GitHub 写操作。
 - 私有仓库数据不应写入日志，API key 和 token 不应出现在响应中。

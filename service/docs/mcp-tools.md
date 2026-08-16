@@ -1,22 +1,40 @@
 # MCP 工具说明
 
-当前版本不新增 MCP SDK 依赖，只提供 SDK 无关的工具定义和处理函数：
+当前版本不新增 MCP SDK 依赖，提供一个最小 JSON-RPC stdio MCP Server。客户端可通过 `initialize`、`tools/list`、`tools/call` 发现和调用工具。
 
-| 文件 | 说明 |
-|---|---|
-| [mcpServer.ts](../src/mcp/mcpServer.ts) | `issueGovernanceTools` 和 `handleIssueGovernanceTool` |
+| 文件                                    | 说明                                  |
+| --------------------------------------- | ------------------------------------- |
+| [mcpServer.ts](../src/mcp/mcpServer.ts) | 工具定义、参数校验、JSON-RPC 请求处理 |
+| [index.ts](../src/mcp/index.ts)         | stdio MCP Server 启动入口             |
+
+## 启动命令
+
+开发环境：
+
+```powershell
+npm --silent run mcp
+```
+
+构建后：
+
+```powershell
+npm run build
+npm run start:mcp
+```
 
 ## 工具列表
 
-| 工具 | 说明 |
-|---|---|
-| `github_issue_list` | 返回请求范围，真实 GitHub 拉取待接入 |
-| `github_issue_govern` | 完整治理 |
-| `issue_dedupe` | 去重 |
-| `issue_clarify` | 澄清 |
-| `issue_split_tasks` | 拆任务 |
-| `issue_generate_tests` | 生成测试点 |
-| `issue_risk_report` | 风险报告 |
-| `issue_governance_digest` | 治理摘要 |
+| 工具                      | 说明                       |
+| ------------------------- | -------------------------- |
+| `github_issue_list`       | 拉取真实 GitHub Issue 列表 |
+| `github_issue_govern`     | 完整治理                   |
+| `issue_dedupe`            | 去重                       |
+| `issue_clarify`           | 澄清                       |
+| `issue_split_tasks`       | 拆任务                     |
+| `issue_generate_tests`    | 生成测试点                 |
+| `issue_risk_report`       | 风险报告                   |
+| `issue_governance_digest` | 治理摘要                   |
 
-后续确认引入 MCP SDK 后，再把这些定义注册为真正的 MCP Server 工具。
+## GitHub 上下文要求
+
+MCP 工具不会生成占位 Issue。服务需要 GitHub App 已安装到目标仓库，缺少可用 GitHub 上下文时工具调用返回 `GITHUB_CONTEXT_UNAVAILABLE`。

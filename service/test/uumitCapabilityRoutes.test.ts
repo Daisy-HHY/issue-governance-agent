@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createUumitCapabilityRoutes } from "../src/api/uumitCapabilityRoutes.js";
 import { IssueGovernanceService } from "../src/services/issueGovernanceService.js";
 import type { AppEnv } from "../src/config/env.js";
+import type { RepositoryIssueProvider } from "../src/services/githubClient.js";
+import type { RawIssue } from "../src/schemas/governanceSchemas.js";
 
 const env: AppEnv = {
   PORT: 3000,
@@ -14,7 +16,27 @@ const env: AppEnv = {
   OPENAI_API_KEY: "openai",
   OPENAI_MODEL: "gpt-4.1-mini",
   OPENAI_EMBEDDING_MODEL: "text-embedding-3-small",
+  REPOSITORY_CONTEXT_PATH: "D:/project/issue-governance-agent",
   LOG_LEVEL: "info"
+};
+
+const issue: RawIssue = {
+  repo: "owner/project",
+  number: 1,
+  title: "UUMIT blank response bug",
+  body: "blank response in UUMIT route",
+  labels: ["uumit"],
+  state: "open",
+  author: "daisy",
+  assignees: [],
+  comments: [],
+  createdAt: "2026-08-16T00:00:00.000Z",
+  updatedAt: "2026-08-16T00:00:00.000Z"
+};
+
+const issueProvider: RepositoryIssueProvider = {
+  getIssueContextByRepository: async () => ({ issue, candidateIssues: [] }),
+  listIssuesForGovernance: async () => [issue]
 };
 
 describe("uumit capability routes", () => {
@@ -32,10 +54,35 @@ describe("uumit capability routes", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns a governance response and reuses the same requestId", async () => {
+  it("fails instead of generating placeholder issues without GitHub context", async () => {
     const app = createUumitCapabilityRoutes({
       env,
       governanceService: new IssueGovernanceService()
+    });
+
+    const response = await app.request("/github/issues/govern", {
+      method: "POST",
+      headers: {
+        "x-api-key": env.UUMIT_API_KEY,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ repo: "owner/project", issueRange: { state: "open", limit: 3 } })
+    });
+
+    expect(response.status).toBe(424);
+    expect(await response.json()).toMatchObject({
+      status: "failed",
+      errorCode: "GITHUB_CONTEXT_UNAVAILABLE",
+      repository: "owner/project"
+    });
+  });
+
+  it("returns a governance response and reuses the same requestId", async () => {
+    const app = createUumitCapabilityRoutes({
+      env,
+      githubClient: issueProvider,
+      governanceService: new IssueGovernanceService(),
+      repositoryPath: env.REPOSITORY_CONTEXT_PATH
     });
     const request = {
       source: "uumit",

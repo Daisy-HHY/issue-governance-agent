@@ -1,6 +1,6 @@
 import { createSign } from "node:crypto";
 import { Octokit } from "@octokit/rest";
-import type { RawIssue } from "../schemas/governanceSchemas.js";
+import type { IssueState, RawIssue } from "../schemas/governanceSchemas.js";
 
 export interface GitHubClientConfig {
   appId: string;
@@ -12,6 +12,21 @@ export interface IssueRef {
   owner: string;
   repo: string;
   issueNumber: number;
+}
+
+export interface IssueRangeQuery {
+  state?: IssueState;
+  limit?: number;
+  labels?: string[];
+  since?: string | null;
+}
+
+export interface RepositoryIssueProvider {
+  getIssueContextByRepository(
+    repoFullName: string,
+    issueNumber: number
+  ): Promise<{ issue: RawIssue; candidateIssues: RawIssue[] }>;
+  listIssuesForGovernance(repoFullName: string, range: IssueRangeQuery): Promise<RawIssue[]>;
 }
 
 interface GitHubIssue {
@@ -67,11 +82,55 @@ export class GitHubClient {
     ]);
 
     return {
-      issue: toRawIssue(`${ref.owner}/${ref.repo}`, issueResponse.data as GitHubIssue, commentsResponse.data as GitHubComment[]),
+      issue: toRawIssue(
+        `${ref.owner}/${ref.repo}`,
+        issueResponse.data as GitHubIssue,
+        commentsResponse.data as GitHubComment[]
+      ),
       candidateIssues: (candidatesResponse.data as GitHubIssue[])
         .filter((issue) => !("pull_request" in issue))
         .map((issue) => toRawIssue(`${ref.owner}/${ref.repo}`, issue, []))
     };
+  }
+
+  /**
+   * Fetches a single issue context when only the repository full name is known.
+   */
+  async getIssueContextByRepository(
+    repoFullName: string,
+    issueNumber: number
+  ): Promise<{ issue: RawIssue; candidateIssues: RawIssue[] }> {
+    const repo = parseRepoFullName(repoFullName);
+    const installationId = await this.getRepositoryInstallationId(repo.owner, repo.repo);
+
+    return this.getIssueContext({
+      installationId,
+      owner: repo.owner,
+      repo: repo.repo,
+      issueNumber
+    });
+  }
+
+  /**
+   * Lists real GitHub issues for batch governance.
+   */
+  async listIssuesForGovernance(repoFullName: string, range: IssueRangeQuery): Promise<RawIssue[]> {
+    const repo = parseRepoFullName(repoFullName);
+    const installationId = await this.getRepositoryInstallationId(repo.owner, repo.repo);
+    const client = await this.createInstallationClient(installationId);
+    const response = await client.issues.listForRepo({
+      owner: repo.owner,
+      repo: repo.repo,
+      state: range.state ?? "open",
+      labels: range.labels?.join(",") || undefined,
+      since: range.since ?? undefined,
+      per_page: range.limit ?? 50
+    });
+
+    return (response.data as GitHubIssue[])
+      .filter((issue) => !("pull_request" in issue))
+      .slice(0, range.limit ?? 50)
+      .map((issue) => toRawIssue(repoFullName, issue, []));
   }
 
   /**
@@ -92,12 +151,36 @@ export class GitHubClient {
   private async createInstallationClient(installationId: number): Promise<Octokit> {
     const jwt = createGitHubAppJwt(this.config.appId, this.config.privateKey);
     const appClient = new Octokit({ auth: jwt });
-    const response = await appClient.request("POST /app/installations/{installation_id}/access_tokens", {
-      installation_id: installationId
-    });
+    const response = await appClient.request(
+      "POST /app/installations/{installation_id}/access_tokens",
+      {
+        installation_id: installationId
+      }
+    );
 
     return new Octokit({ auth: response.data.token });
   }
+
+  private async getRepositoryInstallationId(owner: string, repo: string): Promise<number> {
+    const jwt = createGitHubAppJwt(this.config.appId, this.config.privateKey);
+    const appClient = new Octokit({ auth: jwt });
+    const response = await appClient.request("GET /repos/{owner}/{repo}/installation", {
+      owner,
+      repo
+    });
+
+    return response.data.id;
+  }
+}
+
+function parseRepoFullName(repoFullName: string): { owner: string; repo: string } {
+  const [owner, repo] = repoFullName.split("/");
+
+  if (!owner || !repo) {
+    throw new Error(`Invalid GitHub repository: ${repoFullName}`);
+  }
+
+  return { owner, repo };
 }
 
 function createGitHubAppJwt(appId: string, privateKey: string): string {
@@ -126,7 +209,7 @@ function toRawIssue(repo: string, issue: GitHubIssue, comments: GitHubComment[])
     number: issue.number,
     title: issue.title,
     body: issue.body ?? "",
-    labels: issue.labels.map((label) => (typeof label === "string" ? label : label.name ?? "")),
+    labels: issue.labels.map((label) => (typeof label === "string" ? label : (label.name ?? ""))),
     state: issue.state,
     author: issue.user?.login ?? "unknown",
     assignees: (issue.assignees ?? []).map((assignee) => assignee?.login ?? "").filter(Boolean),

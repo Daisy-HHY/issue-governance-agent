@@ -35,8 +35,9 @@ Bot 评论回当前 Issue
 3. GitHub App 客户端封装：Issue 拉取、候选 Issue 拉取、Bot 评论回写。
 4. 规则版 `IssueGovernanceService`：去重、澄清、拆任务、测试点和风险报告。
 5. GitHub Markdown 评论渲染。
-6. UUMIT 能力 API：`POST /api/v1/github/issues/govern`。
-7. MCP 工具定义与 SDK 无关处理函数。
+6. UUMIT 能力 API：`POST /api/v1/github/issues/govern`，通过 GitHub App 拉取真实 Issue，缺少 GitHub 上下文时返回 `GITHUB_CONTEXT_UNAVAILABLE`。
+7. MCP stdio Server：支持 `initialize`、`tools/list`、`tools/call`，复用同一套 GitHub Issue 治理能力。
+8. 生产入口接入仓库上下文：配置 `REPOSITORY_CONTEXT_PATH` 后，Webhook、UUMIT 和 MCP 调用都会把本地仓库上下文传给治理服务。
 
 ## 本地环境变量
 
@@ -53,6 +54,7 @@ UUMIT_API_KEY=
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4.1-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+REPOSITORY_CONTEXT_PATH=
 LOG_LEVEL=info
 ```
 
@@ -62,6 +64,7 @@ LOG_LEVEL=info
 
 ```powershell
 npm run dev
+npm --silent run mcp
 npm test
 npm run typecheck
 npm run lint
@@ -69,12 +72,12 @@ npm run lint
 
 ## 文档
 
-| 用途 | 链接 |
-|---|---|
-| GitHub App 安装与指令 | [github-app.md](docs/github-app.md) |
-| UUMIT 能力上架说明 | [uumit-capability.md](docs/uumit-capability.md) |
-| MCP 工具说明 | [mcp-tools.md](docs/mcp-tools.md) |
+| 用途                  | 链接                                            |
+| --------------------- | ----------------------------------------------- |
+| GitHub App 安装与指令 | [github-app.md](docs/github-app.md)             |
+| UUMIT 能力上架说明    | [uumit-capability.md](docs/uumit-capability.md) |
+| MCP 工具说明          | [mcp-tools.md](docs/mcp-tools.md)               |
 
 ## P0 验收说明
 
-当前未安装 `node_modules`，因此脚本已配置但尚未运行。安装依赖前需要确认依赖安装位置，避免占用不必要的 C 盘空间。
+当前依赖已安装在 `service/node_modules`，并已具备本地测试、类型检查、lint 和构建脚本。`node_modules`、`dist` 和真实 `.env` 均不会提交。

@@ -17,6 +17,7 @@ const env: AppEnv = {
   OPENAI_API_KEY: "openai",
   OPENAI_MODEL: "gpt-4.1-mini",
   OPENAI_EMBEDDING_MODEL: "text-embedding-3-small",
+  REPOSITORY_CONTEXT_PATH: "D:/project/issue-governance-agent",
   LOG_LEVEL: "info"
 };
 
@@ -47,55 +48,64 @@ describe("webhook handler", () => {
       getIssueContext: async () => ({ issue, candidateIssues: [] }),
       createIssueComment: async () => 100
     } as unknown as GitHubClient;
+    let receivedRepositoryPath: string | undefined;
     const governanceService = {
-      governIssue: async () => ({
-        repository: issue.repo,
-        mode: "comment_result",
-        summary: {
-          analyzedIssues: 1,
-          duplicateGroups: 0,
-          unclearIssues: 0,
-          highRiskIssues: 0,
-          suggestedTasks: 0,
-          testPoints: 0
-        },
-        issues: [
-          {
-            issueNumber: issue.number,
-            title: issue.title,
-            classification: {
-              type: "bug",
-              module: "webhook",
-              clarityScore: 0.8,
-              riskLevel: "low"
-            },
-            dedupe: {
-              isDuplicate: false,
-              canonicalIssue: null,
-              duplicateCandidates: [],
-              confidence: 0,
-              reason: ""
-            },
-            clarification: {
-              needed: false,
-              missingFields: [],
-              questions: [],
-              commentDraft: ""
-            },
-            splitTasks: [],
-            testPoints: [],
-            riskReport: {
-              level: "low",
-              reasons: ["ok"],
-              impactScope: ["webhook"],
-              suggestion: ""
-            },
-            proposedActions: []
-          }
-        ]
-      })
+      governIssue: async (_issue: RawIssue, options: { repositoryPath?: string }) => {
+        receivedRepositoryPath = options.repositoryPath;
+        return {
+          repository: issue.repo,
+          mode: "comment_result",
+          summary: {
+            analyzedIssues: 1,
+            duplicateGroups: 0,
+            unclearIssues: 0,
+            highRiskIssues: 0,
+            suggestedTasks: 0,
+            testPoints: 0
+          },
+          issues: [
+            {
+              issueNumber: issue.number,
+              title: issue.title,
+              classification: {
+                type: "bug",
+                module: "webhook",
+                clarityScore: 0.8,
+                riskLevel: "low"
+              },
+              dedupe: {
+                isDuplicate: false,
+                canonicalIssue: null,
+                duplicateCandidates: [],
+                confidence: 0,
+                reason: ""
+              },
+              clarification: {
+                needed: false,
+                missingFields: [],
+                questions: [],
+                commentDraft: ""
+              },
+              splitTasks: [],
+              testPoints: [],
+              riskReport: {
+                level: "low",
+                reasons: ["ok"],
+                impactScope: ["webhook"],
+                suggestion: ""
+              },
+              proposedActions: []
+            }
+          ]
+        };
+      }
     } as unknown as IssueGovernanceService;
-    const app = createGitHubWebhookRoutes({ env, githubClient, governanceService });
+    const app = createGitHubWebhookRoutes({
+      env,
+      githubClient,
+      governanceService,
+      repositoryPath: env.REPOSITORY_CONTEXT_PATH
+    });
     const body = JSON.stringify({
       action: "created",
       installation: { id: 1 },
@@ -121,5 +131,6 @@ describe("webhook handler", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ status: "commented", commentId: 100 });
+    expect(receivedRepositoryPath).toBe(env.REPOSITORY_CONTEXT_PATH);
   });
 });
