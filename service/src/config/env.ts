@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -17,8 +19,14 @@ const envSchema = z.object({
 
 export type AppEnv = z.infer<typeof envSchema>;
 
-export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
-  const result = envSchema.safeParse(source);
+export function loadEnv(
+  source: NodeJS.ProcessEnv = process.env,
+  envFilePath = resolve(process.cwd(), ".env")
+): AppEnv {
+  const result = envSchema.safeParse({
+    ...loadDotEnv(envFilePath),
+    ...source
+  });
 
   if (!result.success) {
     const missing = result.error.issues.map((issue) => issue.path.join(".")).join(", ");
@@ -26,4 +34,40 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   }
 
   return result.data;
+}
+
+/**
+ * Loads simple KEY=VALUE pairs from a local .env file without adding a runtime dependency.
+ */
+function loadDotEnv(filePath: string): NodeJS.ProcessEnv {
+  if (!existsSync(filePath)) {
+    return {};
+  }
+
+  return readFileSync(filePath, "utf8")
+    .split(/\r?\n/)
+    .reduce<NodeJS.ProcessEnv>((env, line) => {
+      const trimmed = line.trim();
+      const separatorIndex = trimmed.indexOf("=");
+
+      if (!trimmed || trimmed.startsWith("#") || separatorIndex <= 0) {
+        return env;
+      }
+
+      const key = trimmed.slice(0, separatorIndex).trim();
+      const rawValue = trimmed.slice(separatorIndex + 1).trim();
+      env[key] = stripQuotes(rawValue);
+      return env;
+    }, {});
+}
+
+function stripQuotes(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+
+  return value;
 }
