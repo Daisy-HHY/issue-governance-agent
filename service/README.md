@@ -37,7 +37,7 @@ Bot 评论回当前 Issue
 5. GitHub Markdown 评论渲染。
 6. UUMIT 能力 API：`POST /api/v1/github/issues/govern`，通过 GitHub App 拉取真实 Issue，缺少 GitHub 上下文时返回 `GITHUB_CONTEXT_UNAVAILABLE`。
 7. MCP stdio Server：支持 `initialize`、`tools/list`、`tools/call`，复用同一套 GitHub Issue 治理能力。
-8. 生产入口接入仓库上下文：配置 `REPOSITORY_CONTEXT_PATH` 后，Webhook、UUMIT 和 MCP 调用都会把本地仓库上下文传给治理服务。
+8. 生产入口接入仓库上下文：配置 `REPOSITORY_CONTEXT_MAP` 或 `REPOSITORY_CONTEXT_PATH` 后，Webhook、UUMIT 和 MCP 调用都会把本地仓库上下文传给治理服务。
 
 ## 本地环境变量
 
@@ -54,9 +54,28 @@ UUMIT_API_KEY=
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4.1-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+REPOSITORY_CONTEXT_MAP=
 REPOSITORY_CONTEXT_PATH=
 LOG_LEVEL=info
 ```
+
+## 仓库上下文配置
+
+多仓库场景优先配置 `REPOSITORY_CONTEXT_MAP`：
+
+```env
+REPOSITORY_CONTEXT_MAP=owner1/repo1=D:\project\repo1,owner2/repo2=D:\project\repo2
+```
+
+解析优先级：
+
+```text
+REPOSITORY_CONTEXT_MAP 精确命中
+  -> REPOSITORY_CONTEXT_PATH fallback
+  -> 无仓库上下文，基础治理继续执行
+```
+
+当前版本不会自动 clone GitHub 仓库。需要先把目标仓库 clone 到本机，再把 `owner/repo` 映射到对应本地目录。
 
 ## 常用命令
 

@@ -17,6 +17,7 @@ const env: AppEnv = {
   OPENAI_API_KEY: "openai",
   OPENAI_MODEL: "gpt-4.1-mini",
   OPENAI_EMBEDDING_MODEL: "text-embedding-3-small",
+  REPOSITORY_CONTEXT_MAP: "owner/project=D:/project/mapped-project",
   REPOSITORY_CONTEXT_PATH: "D:/project/issue-governance-agent",
   LOG_LEVEL: "info"
 };
@@ -104,7 +105,10 @@ describe("webhook handler", () => {
       env,
       githubClient,
       governanceService,
-      repositoryPath: env.REPOSITORY_CONTEXT_PATH
+      repositoryPathResolverOptions: {
+        repositoryContextMap: env.REPOSITORY_CONTEXT_MAP,
+        fallbackRepositoryPath: env.REPOSITORY_CONTEXT_PATH
+      }
     });
     const body = JSON.stringify({
       action: "created",
@@ -131,6 +135,6 @@ describe("webhook handler", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ status: "commented", commentId: 100 });
-    expect(receivedRepositoryPath).toBe(env.REPOSITORY_CONTEXT_PATH);
+    expect(receivedRepositoryPath).toBe("D:\\project\\mapped-project");
   });
 });

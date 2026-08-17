@@ -38,3 +38,15 @@ npm run start:mcp
 ## GitHub 上下文要求
 
 MCP 工具不会生成占位 Issue。服务需要 GitHub App 已安装到目标仓库，缺少可用 GitHub 上下文时工具调用返回 `GITHUB_CONTEXT_UNAVAILABLE`。
+
+## 本地仓库上下文
+
+工具入参中的 `repo` 会用于解析本地源码目录：
+
+```text
+REPOSITORY_CONTEXT_MAP 精确命中
+  -> REPOSITORY_CONTEXT_PATH fallback
+  -> 无仓库上下文，基础治理继续执行
+```
+
+当前版本不会自动 clone GitHub 仓库，也不会把本地路径返回给 MCP 调用方。

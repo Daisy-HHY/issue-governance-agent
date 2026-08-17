@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createUumitCapabilityRoutes } from "./api/uumitCapabilityRoutes.js";
 import { createGitHubWebhookRoutes } from "./github/webhookHandler.js";
+import type { RepositoryPathResolverOptions } from "./repository/repositoryPathResolver.js";
 import { GitHubClient } from "./services/githubClient.js";
 import { IssueGovernanceService } from "./services/issueGovernanceService.js";
 import type { AppEnv } from "./config/env.js";
@@ -10,7 +11,10 @@ import type { AppEnv } from "./config/env.js";
  */
 export function createApp(env: AppEnv): Hono {
   const app = new Hono();
-  const repositoryPath = env.REPOSITORY_CONTEXT_PATH || undefined;
+  const repositoryPathResolverOptions: RepositoryPathResolverOptions = {
+    repositoryContextMap: env.REPOSITORY_CONTEXT_MAP,
+    fallbackRepositoryPath: env.REPOSITORY_CONTEXT_PATH
+  };
   const governanceService = new IssueGovernanceService();
   const githubClient = new GitHubClient({
     appId: env.GITHUB_APP_ID,
@@ -30,7 +34,7 @@ export function createApp(env: AppEnv): Hono {
       env,
       githubClient,
       governanceService,
-      repositoryPath
+      repositoryPathResolverOptions
     })
   );
   app.route(
@@ -39,7 +43,7 @@ export function createApp(env: AppEnv): Hono {
       env,
       githubClient,
       governanceService,
-      repositoryPath
+      repositoryPathResolverOptions
     })
   );
 

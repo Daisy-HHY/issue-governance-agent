@@ -4,6 +4,7 @@ import {
   handleMcpJsonRpcRequest,
   issueGovernanceTools
 } from "../src/mcp/mcpServer.js";
+import { IssueGovernanceService } from "../src/services/issueGovernanceService.js";
 import type { RepositoryIssueProvider } from "../src/services/githubClient.js";
 import type { RawIssue } from "../src/schemas/governanceSchemas.js";
 
@@ -62,6 +63,41 @@ describe("mcp server helpers", () => {
         issueNumber: 1
       })
     ).rejects.toThrow("GITHUB_CONTEXT_UNAVAILABLE");
+  });
+
+  it("resolves repository context paths from the requested repo", async () => {
+    let receivedRepositoryPath = "";
+    const service = new IssueGovernanceService(async (repoPath) => {
+      receivedRepositoryPath = repoPath;
+      return {
+        repoPath,
+        query: "",
+        keywords: [],
+        projectProfile: "",
+        codeContext: "context",
+        fileList: [],
+        contextSources: [],
+        truncated: false
+      };
+    });
+
+    await handleIssueGovernanceTool(
+      "issue_risk_report",
+      {
+        repo: "owner/project",
+        issueNumber: 1
+      },
+      {
+        issueProvider,
+        service,
+        repositoryPathResolverOptions: {
+          repositoryContextMap: "owner/project=D:/project/mcp-project",
+          fallbackRepositoryPath: "D:/project/fallback"
+        }
+      }
+    );
+
+    expect(receivedRepositoryPath).toBe("D:\\project\\mcp-project");
   });
 
   it("exposes tools through MCP JSON-RPC methods", async () => {

@@ -31,7 +31,10 @@ async function handleLine(line: string): Promise<void> {
     const response = await handleMcpJsonRpcRequest(JSON.parse(line), {
       service: governanceService,
       issueProvider: githubClient,
-      repositoryPath: env.REPOSITORY_CONTEXT_PATH || undefined
+      repositoryPathResolverOptions: {
+        repositoryContextMap: env.REPOSITORY_CONTEXT_MAP,
+        fallbackRepositoryPath: env.REPOSITORY_CONTEXT_PATH
+      }
     });
 
     if (response) {

@@ -65,6 +65,18 @@ x-api-key: <UUMIT_API_KEY>
 }
 ```
 
+## 本地仓库上下文
+
+请求中的 `repo` 会用于解析本地源码目录：
+
+```text
+REPOSITORY_CONTEXT_MAP 精确命中
+  -> REPOSITORY_CONTEXT_PATH fallback
+  -> 无仓库上下文，基础治理继续执行
+```
+
+当前版本不会自动 clone GitHub 仓库。需要先把目标仓库 clone 到本机，再配置 `REPOSITORY_CONTEXT_MAP`。服务不会把本地路径返回给外部调用方。
+
 ## 调用示例
 
 ```json

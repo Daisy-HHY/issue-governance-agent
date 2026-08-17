@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { governanceRequestSchema, governanceResponseSchema } from "../schemas/governanceSchemas.js";
 import { renderGovernanceComment } from "../github/commentRenderer.js";
+import { resolveRepositoryPath } from "../repository/repositoryPathResolver.js";
 import type { AppEnv } from "../config/env.js";
+import type { RepositoryPathResolverOptions } from "../repository/repositoryPathResolver.js";
 import type { RepositoryIssueProvider } from "../services/githubClient.js";
 import type { IssueGovernanceService } from "../services/issueGovernanceService.js";
 import type { GovernanceRequest, UumitGovernanceResponse } from "../schemas/governanceSchemas.js";
@@ -14,7 +16,7 @@ export interface UumitRoutesDeps {
   env: AppEnv;
   governanceService: IssueGovernanceService;
   githubClient?: RepositoryIssueProvider;
-  repositoryPath?: string;
+  repositoryPathResolverOptions?: RepositoryPathResolverOptions;
   idempotencyStore?: Map<string, UumitGovernanceResponse>;
   rateLimitStore?: Map<string, number[]>;
 }
@@ -134,6 +136,11 @@ async function governRequestIssues(
     return null;
   }
 
+  const repositoryPath = resolveRepositoryPath(
+    request.repo,
+    deps.repositoryPathResolverOptions
+  ).repositoryPath;
+
   if (request.issueNumber !== undefined) {
     const { issue, candidateIssues } = await deps.githubClient.getIssueContextByRepository(
       request.repo,
@@ -143,7 +150,7 @@ async function governRequestIssues(
       tasks: request.tasks,
       candidateIssues,
       mode: request.mode,
-      repositoryPath: deps.repositoryPath
+      repositoryPath
     });
   }
 
@@ -161,7 +168,7 @@ async function governRequestIssues(
         tasks: request.tasks,
         candidateIssues: requestIssues.filter((candidate) => candidate.number !== issue.number),
         mode: request.mode,
-        repositoryPath: deps.repositoryPath
+        repositoryPath
       })
     )
   );

@@ -3,7 +3,9 @@ import { Hono } from "hono";
 import { parseGovernanceCommand } from "./commandParser.js";
 import { renderErrorComment, renderGovernanceComment } from "./commentRenderer.js";
 import { canTriggerGovernance } from "./permission.js";
+import { resolveRepositoryPath } from "../repository/repositoryPathResolver.js";
 import type { AppEnv } from "../config/env.js";
+import type { RepositoryPathResolverOptions } from "../repository/repositoryPathResolver.js";
 import type { GitHubClient } from "../services/githubClient.js";
 import type { IssueGovernanceService } from "../services/issueGovernanceService.js";
 
@@ -11,7 +13,7 @@ export interface GitHubWebhookDeps {
   env: AppEnv;
   githubClient: GitHubClient;
   governanceService: IssueGovernanceService;
-  repositoryPath?: string;
+  repositoryPathResolverOptions?: RepositoryPathResolverOptions;
   processedDeliveries?: Set<string>;
 }
 
@@ -95,11 +97,15 @@ export function createGitHubWebhookRoutes(deps: GitHubWebhookDeps): Hono {
     }
 
     const { issue, candidateIssues } = await deps.githubClient.getIssueContext(ref);
+    const repositoryPath = resolveRepositoryPath(
+      payload.repository.full_name,
+      deps.repositoryPathResolverOptions
+    ).repositoryPath;
     const result = await deps.governanceService.governIssue(issue, {
       tasks: command.tasks,
       candidateIssues,
       mode: "comment_result",
-      repositoryPath: deps.repositoryPath
+      repositoryPath
     });
     const commentId = await deps.githubClient.createIssueComment(
       ref,
