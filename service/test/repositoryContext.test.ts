@@ -40,6 +40,34 @@ describe("repository context", () => {
     expect(calls).toEqual([["codegraph", "sync"]]);
   });
 
+  it("initializes CodeGraph when an existing .codegraph directory is not initialized", async () => {
+    const repoPath = await createTempRepo();
+    await mkdir(path.join(repoPath, ".codegraph"));
+    const calls: string[][] = [];
+    const runner: CommandRunner = async (command, args) => {
+      calls.push([command, ...args]);
+      if (args[0] === "sync") {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: `[ERR] CodeGraph not initialized in ${repoPath}`,
+          message: `[ERR] CodeGraph not initialized in ${repoPath}`
+        };
+      }
+
+      return { exitCode: 0, stdout: "initialized", stderr: "" };
+    };
+
+    const result = await ensureCodeGraph(repoPath, { runner });
+
+    expect(result.status).toBe("used");
+    expect(result.action).toBe("init");
+    expect(calls).toEqual([
+      ["codegraph", "sync"],
+      ["codegraph", "init"]
+    ]);
+  });
+
   it("initializes CodeGraph when the index is missing", async () => {
     const repoPath = await createTempRepo();
     const calls: string[][] = [];

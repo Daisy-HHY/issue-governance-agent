@@ -148,7 +148,10 @@ export class GitHubClient {
     return response.data.id;
   }
 
-  private async createInstallationClient(installationId: number): Promise<Octokit> {
+  /**
+   * Creates an installation token that can be used for GitHub API calls or repository clone.
+   */
+  async createInstallationAccessToken(installationId: number): Promise<string> {
     const jwt = createGitHubAppJwt(this.config.appId, this.config.privateKey);
     const appClient = new Octokit({ auth: jwt });
     const response = await appClient.request(
@@ -158,7 +161,21 @@ export class GitHubClient {
       }
     );
 
-    return new Octokit({ auth: response.data.token });
+    return response.data.token;
+  }
+
+  /**
+   * Creates an installation token for the GitHub repository full name.
+   */
+  async getRepositoryAccessToken(repoFullName: string): Promise<string> {
+    const repo = parseRepoFullName(repoFullName);
+    const installationId = await this.getRepositoryInstallationId(repo.owner, repo.repo);
+
+    return this.createInstallationAccessToken(installationId);
+  }
+
+  private async createInstallationClient(installationId: number): Promise<Octokit> {
+    return new Octokit({ auth: await this.createInstallationAccessToken(installationId) });
   }
 
   private async getRepositoryInstallationId(owner: string, repo: string): Promise<number> {

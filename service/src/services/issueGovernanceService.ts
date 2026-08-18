@@ -25,7 +25,8 @@ const DEFAULT_TASKS: GovernanceTask[] = [
 ];
 
 const BUG_WORDS = ["bug", "error", "fail", "failed", "blank", "crash", "exception", "报错", "失败", "异常"];
-const FEATURE_WORDS = ["feature", "support", "add", "新增", "支持", "需求"];
+const FEATURE_WORDS = ["feature", "support", "add", "新增", "支持", "需求", "增加"];
+const TASK_WORDS = ["task", "optimize", "improve", "compress", "优化", "改进", "调整", "压缩"];
 const DOC_WORDS = ["docs", "readme", "文档", "说明"];
 const QUESTION_WORDS = ["how", "why", "what", "如何", "为什么", "吗", "?"];
 
@@ -157,7 +158,7 @@ function buildGovernanceResult(
   tasks: GovernanceTask[],
   repositoryContext: RelevantRepositoryContext | null
 ): GovernanceResult {
-  const normalized = normalizeIssue(issue);
+  const normalized = normalizeIssue(issue, repositoryContext);
   const dedupe = tasks.includes("dedupe") ? detectDuplicate(issue, candidates) : emptyDedupe();
   const clarification = tasks.includes("clarify") ? buildClarification(normalized) : emptyClarification();
   const splitTasks = tasks.includes("split_tasks") ? buildSplitTasks(normalized, clarification.needed) : [];
@@ -185,7 +186,10 @@ function buildGovernanceResult(
   });
 }
 
-function normalizeIssue(issue: RawIssue): NormalizedIssue {
+function normalizeIssue(
+  issue: RawIssue,
+  repositoryContext: RelevantRepositoryContext | null
+): NormalizedIssue {
   const text = `${issue.title}\n${issue.body}\n${issue.labels.join(" ")}`;
   const lowered = text.toLowerCase();
   const issueType = includesAny(lowered, BUG_WORDS)
@@ -196,8 +200,10 @@ function normalizeIssue(issue: RawIssue): NormalizedIssue {
         ? "docs"
         : includesAny(lowered, QUESTION_WORDS)
           ? "question"
-          : "unknown";
-  const missingFields = getMissingFields(issueType, lowered);
+          : includesAny(lowered, TASK_WORDS)
+            ? "task"
+            : inferContextIssueType(lowered, repositoryContext);
+  const missingFields = getMissingFields(issueType, lowered, hasRepositoryEvidence(repositoryContext));
 
   return {
     repo: issue.repo,
@@ -205,14 +211,18 @@ function normalizeIssue(issue: RawIssue): NormalizedIssue {
     title: issue.title,
     summary: issue.body ? firstLine(issue.body) : issue.title,
     issueType,
-    module: inferModule(issue),
+    module: inferModule(issue, repositoryContext),
     evidence: [issue.title, ...issue.labels].filter(Boolean),
     missingFields,
     clarityScore: Math.max(0.1, Math.min(1, 1 - missingFields.length * 0.2))
   };
 }
 
-function getMissingFields(issueType: NormalizedIssue["issueType"], loweredText: string): string[] {
+function getMissingFields(
+  issueType: NormalizedIssue["issueType"],
+  loweredText: string,
+  hasRepositoryContext: boolean
+): string[] {
   if (issueType === "bug") {
     return [
       !includesAny(loweredText, ["step", "reproduce", "复现", "步骤"]) ? "复现步骤" : "",
@@ -226,6 +236,10 @@ function getMissingFields(issueType: NormalizedIssue["issueType"], loweredText: 
       !includesAny(loweredText, ["acceptance", "验收", "标准"]) ? "验收标准" : "",
       !includesAny(loweredText, ["scenario", "场景"]) ? "使用场景" : ""
     ].filter(Boolean);
+  }
+
+  if (issueType === "task" && hasRepositoryContext) {
+    return [];
   }
 
   return loweredText.length < 80 ? ["更多上下文"] : [];
@@ -278,30 +292,42 @@ function buildSplitTasks(normalized: NormalizedIssue, needsClarification: boolea
     ];
   }
 
+  const analysisTaskTitle = isResumeCompressionIssue(normalized)
+    ? "分析 resume 简历压缩路径"
+    : `分析 ${normalized.module} 模块影响范围`;
+
   return [
     {
-      title: `分析 ${normalized.module} 模块影响范围`,
-      type: "backend",
+      title: analysisTaskTitle,
+      type: inferTaskType(normalized.module),
       description: normalized.summary,
       dependencies: [],
-      acceptanceCriteria: ["确认影响文件、接口或用户路径", "明确回归验证范围"]
+      acceptanceCriteria: isResumeCompressionIssue(normalized)
+        ? ["定位生成简历和分页/缩放相关代码", "明确无法压缩到一页时的用户确认流程"]
+        : ["确认影响文件、接口或用户路径", "明确回归验证范围"]
     },
     {
       title: "补充治理结果回归测试",
       type: "test",
       description: "覆盖正常路径、异常输入和回归风险。",
-      dependencies: [`分析 ${normalized.module} 模块影响范围`],
+      dependencies: [analysisTaskTitle],
       acceptanceCriteria: ["关键风险有对应测试点", "测试失败时能定位原因"]
     }
   ];
 }
 
 function buildTestPoints(normalized: NormalizedIssue, riskLevel: RiskLevel): string[] {
-  const points = [
-    `验证 ${normalized.module} 模块正常路径。`,
-    "验证无效输入或信息缺失时返回清晰错误。",
-    "验证本次修改不会破坏既有 Schema 和评论渲染。"
-  ];
+  const points = isResumeCompressionIssue(normalized)
+    ? [
+        "验证简历内容可自动压缩到一页。",
+        "验证内容过多无法压缩时会提示用户确认重点内容。",
+        "验证压缩后模板样式和导出结果不被破坏。"
+      ]
+    : [
+        `验证 ${normalized.module} 模块正常路径。`,
+        "验证无效输入或信息缺失时返回清晰错误。",
+        "验证本次修改不会破坏既有 Schema 和评论渲染。"
+      ];
 
   if (normalized.issueType === "bug") {
     points.unshift("按 Issue 描述复现问题，并验证修复后的回归路径。");
@@ -328,8 +354,10 @@ function buildRiskReport(
     reasons.push("可能影响外部入口、鉴权或 GitHub 写操作链路。");
   }
 
-  if (repositoryContext?.codeContext) {
-    reasons.push("已结合仓库上下文，后续判断应引用相关源码证据。");
+  if (hasUsableCodeContext(repositoryContext?.codeContext)) {
+    reasons.push("已结合 CodeGraph 命中的相关源码上下文，后续判断应引用具体文件证据。");
+  } else if (repositoryContext?.fileList.length) {
+    reasons.push(`已加载仓库文件列表，当前影响范围推断为 ${normalized.module} 模块。`);
   }
 
   const level: RiskLevel = reasons.some((reason) => reason.includes("鉴权") || reason.includes("写操作"))
@@ -380,7 +408,7 @@ function emptyClarification(): GovernanceResult["clarification"] {
   };
 }
 
-function inferModule(issue: RawIssue): string {
+function inferModule(issue: RawIssue, repositoryContext: RelevantRepositoryContext | null): string {
   const labels = issue.labels.map((label) => label.toLowerCase());
   const moduleLabel = labels.find((label) => label.startsWith("module:") || label.startsWith("area:"));
 
@@ -390,7 +418,86 @@ function inferModule(issue: RawIssue): string {
 
   const text = `${issue.title} ${issue.body}`.toLowerCase();
   const knownModules = ["webhook", "github", "uumit", "mcp", "schema", "api", "service", "repository", "auth"];
-  return knownModules.find((moduleName) => text.includes(moduleName)) ?? "unknown";
+  const explicitModule = knownModules.find((moduleName) => text.includes(moduleName));
+  if (explicitModule) {
+    return explicitModule;
+  }
+
+  return inferModuleFromRepositoryContext(text, repositoryContext);
+}
+
+function inferContextIssueType(
+  loweredText: string,
+  repositoryContext: RelevantRepositoryContext | null
+): NormalizedIssue["issueType"] {
+  const contextText = getRepositoryContextText(repositoryContext);
+  if (includesAny(`${loweredText} ${contextText}`, ["resume", "cv", "简历"])) {
+    return "task";
+  }
+
+  return "unknown";
+}
+
+function inferModuleFromRepositoryContext(
+  loweredText: string,
+  repositoryContext: RelevantRepositoryContext | null
+): string {
+  const contextText = getRepositoryContextText(repositoryContext);
+
+  if (includesAny(`${loweredText} ${contextText}`, ["resume", "cv", "简历"])) {
+    return "resume";
+  }
+
+  if (includesAny(`${loweredText} ${contextText}`, ["editor", "toolbar", "canvas", "编辑器"])) {
+    return "editor";
+  }
+
+  const matchedFile = repositoryContext?.fileList.find((filePath) =>
+    tokenize(loweredText).has(firstPathSegment(filePath).toLowerCase())
+  );
+
+  return matchedFile ? firstPathSegment(matchedFile) : "unknown";
+}
+
+function inferTaskType(moduleName: string): SplitTask["type"] {
+  return ["resume", "editor", "ui", "docs"].some((name) => moduleName.includes(name))
+    ? "frontend"
+    : "backend";
+}
+
+function isResumeCompressionIssue(normalized: NormalizedIssue): boolean {
+  const text = `${normalized.title} ${normalized.summary}`.toLowerCase();
+  return normalized.module === "resume" && includesAny(text, ["compress", "压缩"]);
+}
+
+function getRepositoryContextText(repositoryContext: RelevantRepositoryContext | null): string {
+  if (!repositoryContext) {
+    return "";
+  }
+
+  return [
+    repositoryContext.repoPath,
+    repositoryContext.projectProfile,
+    repositoryContext.codeContext,
+    ...repositoryContext.fileList
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function hasUsableCodeContext(codeContext?: string): boolean {
+  return Boolean(codeContext?.trim()) && !codeContext!.startsWith("No relevant code found");
+}
+
+function hasRepositoryEvidence(repositoryContext: RelevantRepositoryContext | null): boolean {
+  return Boolean(
+    repositoryContext &&
+      (hasUsableCodeContext(repositoryContext.codeContext) || repositoryContext.fileList.length > 0)
+  );
+}
+
+function firstPathSegment(filePath: string): string {
+  return filePath.split(/[\\/]/)[0] ?? "";
 }
 
 function includesAny(value: string, words: string[]): boolean {

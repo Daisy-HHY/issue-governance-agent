@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { governanceRequestSchema, governanceResponseSchema } from "../schemas/governanceSchemas.js";
 import { renderGovernanceComment } from "../github/commentRenderer.js";
-import { resolveRepositoryPath } from "../repository/repositoryPathResolver.js";
+import { resolveRepositoryPathForContext } from "../repository/repositoryPathResolver.js";
 import type { AppEnv } from "../config/env.js";
 import type { RepositoryPathResolverOptions } from "../repository/repositoryPathResolver.js";
 import type { RepositoryIssueProvider } from "../services/githubClient.js";
@@ -35,7 +35,7 @@ export function createUumitCapabilityRoutes(deps: UumitRoutesDeps): Hono {
     const apiKey = context.req.header("x-api-key") ?? auth.replace(/^Bearer\s+/i, "");
     const clientKey = context.req.header("x-forwarded-for") ?? "local";
 
-    if (apiKey !== deps.env.UUMIT_API_KEY) {
+    if (!deps.env.UUMIT_API_KEY || apiKey !== deps.env.UUMIT_API_KEY) {
       return context.json(
         failedResponse("unauthorized", "UNAUTHORIZED", "Invalid UUMIT API key"),
         401
@@ -136,9 +136,11 @@ async function governRequestIssues(
     return null;
   }
 
-  const repositoryPath = resolveRepositoryPath(
-    request.repo,
-    deps.repositoryPathResolverOptions
+  const repositoryPath = (
+    await resolveRepositoryPathForContext(
+      request.repo,
+      deps.repositoryPathResolverOptions
+    )
   ).repositoryPath;
 
   if (request.issueNumber !== undefined) {

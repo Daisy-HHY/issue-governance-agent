@@ -9,12 +9,28 @@ const envSchema = z.object({
   GITHUB_WEBHOOK_SECRET: z.string().min(1),
   GITHUB_TRIGGER_USERS: z.string().default(""),
   GITHUB_TRIGGER_ASSOCIATIONS: z.string().default("OWNER,MEMBER,COLLABORATOR"),
-  UUMIT_API_KEY: z.string().min(1),
+  UUMIT_API_KEY: z.string().default(""),
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_MODEL: z.string().min(1).default("gpt-4.1-mini"),
   OPENAI_EMBEDDING_MODEL: z.string().min(1).default("text-embedding-3-small"),
   REPOSITORY_CONTEXT_MAP: z.string().default(""),
   REPOSITORY_CONTEXT_PATH: z.string().default(""),
+  REPOSITORY_CONTEXT_ROOT: z.string().default(""),
+  REPOSITORY_CONTEXT_AUTO_CLONE: z.preprocess((value) => {
+    if (typeof value !== "string") {
+      return value;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "off", ""].includes(normalized)) {
+      return false;
+    }
+
+    return value;
+  }, z.boolean()).default(false),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info")
 });
 

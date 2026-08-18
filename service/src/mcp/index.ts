@@ -33,7 +33,10 @@ async function handleLine(line: string): Promise<void> {
       issueProvider: githubClient,
       repositoryPathResolverOptions: {
         repositoryContextMap: env.REPOSITORY_CONTEXT_MAP,
-        fallbackRepositoryPath: env.REPOSITORY_CONTEXT_PATH
+        fallbackRepositoryPath: env.REPOSITORY_CONTEXT_PATH,
+        repositoryContextRoot: env.REPOSITORY_CONTEXT_ROOT,
+        autoClone: env.REPOSITORY_CONTEXT_AUTO_CLONE,
+        cloneTokenProvider: (repoFullName) => githubClient.getRepositoryAccessToken(repoFullName)
       }
     });
 

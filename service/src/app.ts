@@ -11,15 +11,18 @@ import type { AppEnv } from "./config/env.js";
  */
 export function createApp(env: AppEnv): Hono {
   const app = new Hono();
-  const repositoryPathResolverOptions: RepositoryPathResolverOptions = {
-    repositoryContextMap: env.REPOSITORY_CONTEXT_MAP,
-    fallbackRepositoryPath: env.REPOSITORY_CONTEXT_PATH
-  };
   const governanceService = new IssueGovernanceService();
   const githubClient = new GitHubClient({
     appId: env.GITHUB_APP_ID,
     privateKey: env.GITHUB_APP_PRIVATE_KEY
   });
+  const repositoryPathResolverOptions: RepositoryPathResolverOptions = {
+    repositoryContextMap: env.REPOSITORY_CONTEXT_MAP,
+    fallbackRepositoryPath: env.REPOSITORY_CONTEXT_PATH,
+    repositoryContextRoot: env.REPOSITORY_CONTEXT_ROOT,
+    autoClone: env.REPOSITORY_CONTEXT_AUTO_CLONE,
+    cloneTokenProvider: (repoFullName) => githubClient.getRepositoryAccessToken(repoFullName)
+  };
 
   app.get("/health", (context) => {
     return context.json({

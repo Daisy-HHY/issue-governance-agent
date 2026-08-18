@@ -76,4 +76,37 @@ describe("IssueGovernanceService", () => {
     expect(response.issues[0]?.issueNumber).toBe(issue.number);
     expect(response.issues[0]?.proposedActions.every((action) => action.requiresApproval)).toBe(true);
   });
+
+  it("uses repository context to avoid unknown classification for short issues", async () => {
+    const resumeIssue: RawIssue = {
+      ...issue,
+      repo: "Chasen-Liao/resume-skills",
+      number: 1,
+      title: "简历压缩",
+      body: "希望在简历编辑器中压缩简历展示内容，减少页面占用空间，同时保持模板样式和导出结果可用。",
+      labels: []
+    };
+    const service = new IssueGovernanceService(async (repoPath) => ({
+      repoPath,
+      query: "简历压缩",
+      keywords: ["简历压缩"],
+      projectProfile: "",
+      codeContext: "No relevant code found for \"简历压缩\"",
+      fileList: ["docs/app.js", "lib/editor-document.mjs", "assets/minimal-blue-business.png"],
+      truncated: false,
+      contextSources: [{ type: "file_list", status: "used", path: repoPath }]
+    }));
+
+    const response = await service.governIssue(resumeIssue, {
+      repositoryPath: "D:/project/issue-governance-agent-repos/Chasen-Liao/resume-skills"
+    });
+    const result = response.issues[0]!;
+
+    expect(result.classification.type).toBe("task");
+    expect(result.classification.module).toBe("resume");
+    expect(result.splitTasks[0]?.type).toBe("frontend");
+    expect(result.splitTasks[0]?.title).toBe("分析 resume 简历压缩路径");
+    expect(result.testPoints).toContain("验证简历内容可自动压缩到一页。");
+    expect(result.riskReport.reasons.join("\n")).toContain("仓库文件列表");
+  });
 });

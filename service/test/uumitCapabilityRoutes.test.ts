@@ -18,6 +18,8 @@ const env: AppEnv = {
   OPENAI_EMBEDDING_MODEL: "text-embedding-3-small",
   REPOSITORY_CONTEXT_MAP: "owner/project=D:/project/uumit-project",
   REPOSITORY_CONTEXT_PATH: "D:/project/issue-governance-agent",
+  REPOSITORY_CONTEXT_ROOT: "",
+  REPOSITORY_CONTEXT_AUTO_CLONE: false,
   LOG_LEVEL: "info"
 };
 
@@ -44,6 +46,20 @@ describe("uumit capability routes", () => {
   it("rejects requests without API key", async () => {
     const app = createUumitCapabilityRoutes({
       env,
+      governanceService: new IssueGovernanceService()
+    });
+
+    const response = await app.request("/github/issues/govern", {
+      method: "POST",
+      body: JSON.stringify({ repo: "owner/project", issueNumber: 1 })
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects requests when UUMIT API key is not configured", async () => {
+    const app = createUumitCapabilityRoutes({
+      env: { ...env, UUMIT_API_KEY: "" },
       governanceService: new IssueGovernanceService()
     });
 

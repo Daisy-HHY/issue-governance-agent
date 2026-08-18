@@ -19,6 +19,8 @@ const env: AppEnv = {
   OPENAI_EMBEDDING_MODEL: "text-embedding-3-small",
   REPOSITORY_CONTEXT_MAP: "owner/project=D:/project/mapped-project",
   REPOSITORY_CONTEXT_PATH: "D:/project/issue-governance-agent",
+  REPOSITORY_CONTEXT_ROOT: "",
+  REPOSITORY_CONTEXT_AUTO_CLONE: false,
   LOG_LEVEL: "info"
 };
 

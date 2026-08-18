@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { parseGovernanceCommand } from "./commandParser.js";
 import { renderErrorComment, renderGovernanceComment } from "./commentRenderer.js";
 import { canTriggerGovernance } from "./permission.js";
-import { resolveRepositoryPath } from "../repository/repositoryPathResolver.js";
+import { resolveRepositoryPathForContext } from "../repository/repositoryPathResolver.js";
 import type { AppEnv } from "../config/env.js";
 import type { RepositoryPathResolverOptions } from "../repository/repositoryPathResolver.js";
 import type { GitHubClient } from "../services/githubClient.js";
@@ -97,9 +97,11 @@ export function createGitHubWebhookRoutes(deps: GitHubWebhookDeps): Hono {
     }
 
     const { issue, candidateIssues } = await deps.githubClient.getIssueContext(ref);
-    const repositoryPath = resolveRepositoryPath(
-      payload.repository.full_name,
-      deps.repositoryPathResolverOptions
+    const repositoryPath = (
+      await resolveRepositoryPathForContext(
+        payload.repository.full_name,
+        deps.repositoryPathResolverOptions
+      )
     ).repositoryPath;
     const result = await deps.governanceService.governIssue(issue, {
       tasks: command.tasks,

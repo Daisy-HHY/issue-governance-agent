@@ -1,5 +1,5 @@
 import { governanceRequestSchema, governanceResponseSchema } from "../schemas/governanceSchemas.js";
-import { resolveRepositoryPath } from "../repository/repositoryPathResolver.js";
+import { resolveRepositoryPathForContext } from "../repository/repositoryPathResolver.js";
 import type { RepositoryPathResolverOptions } from "../repository/repositoryPathResolver.js";
 import type { RepositoryIssueProvider } from "../services/githubClient.js";
 import { IssueGovernanceService } from "../services/issueGovernanceService.js";
@@ -172,7 +172,7 @@ export async function handleIssueGovernanceTool(
 ): Promise<unknown> {
   const service = options.service ?? new IssueGovernanceService();
   const request = governanceRequestSchema.parse(input);
-  const repositoryPath = resolveToolRepositoryPath(request.repo, options);
+  const repositoryPath = await resolveToolRepositoryPath(request.repo, options);
   const taskOverrides: Partial<Record<string, GovernanceRequest["tasks"]>> = {
     issue_dedupe: ["dedupe"],
     issue_clarify: ["clarify"],
@@ -260,12 +260,13 @@ export async function handleIssueGovernanceTool(
   });
 }
 
-function resolveToolRepositoryPath(
+async function resolveToolRepositoryPath(
   repo: string,
   options: IssueGovernanceToolOptions
-): string | undefined {
+): Promise<string | undefined> {
   if (options.repositoryPathResolverOptions) {
-    return resolveRepositoryPath(repo, options.repositoryPathResolverOptions).repositoryPath;
+    return (await resolveRepositoryPathForContext(repo, options.repositoryPathResolverOptions))
+      .repositoryPath;
   }
 
   return options.repositoryPath;

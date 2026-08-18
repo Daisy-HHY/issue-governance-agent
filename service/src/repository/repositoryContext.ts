@@ -147,19 +147,29 @@ export async function ensureCodeGraph(
 
   const hasCodeGraphIndex = await isDirectory(path.join(resolvedRepoPath, ".codegraph"));
   const action = hasCodeGraphIndex ? "sync" : "init";
-  const command = await runner("codegraph", [action], {
+  let command = await runner("codegraph", [action], {
     cwd: resolvedRepoPath,
     timeoutMs
   });
+  let finalAction: "init" | "sync" = action;
+
+  if (action === "sync" && isCodeGraphNotInitialized(command)) {
+    command = await runner("codegraph", ["init"], {
+      cwd: resolvedRepoPath,
+      timeoutMs
+    });
+    finalAction = "init";
+  }
+
   const status = getCommandStatus(command);
   const message =
     status === "used"
-      ? `CodeGraph ${action} succeeded`
-      : `CodeGraph ${action} ${status}: ${command.message ?? command.stderr}`;
+      ? `CodeGraph ${finalAction} succeeded`
+      : `CodeGraph ${finalAction} ${status}: ${command.message ?? command.stderr}`;
 
   return {
     status,
-    action,
+    action: finalAction,
     repoPath: resolvedRepoPath,
     command,
     source: {
@@ -489,6 +499,11 @@ function getCommandStatus(command: CommandResult): RepositoryContextStatus {
   }
 
   return "failed";
+}
+
+function isCodeGraphNotInitialized(command: CommandResult): boolean {
+  const message = [command.message, command.stderr, command.stdout].filter(Boolean).join(" ");
+  return command.exitCode !== 0 && /codegraph not initialized/i.test(message);
 }
 
 async function listRepositoryFiles(repoPath: string, limit: number): Promise<string[]> {
