@@ -52,7 +52,15 @@ describe("comment renderer", () => {
             level: "medium",
             reasons: ["信息不足"],
             impactScope: ["webhook"],
-            suggestion: "先澄清"
+            suggestion: "先澄清",
+            contextSummary: {
+              provider: "cli",
+              status: "used",
+              repositoryPath: "D:/project/owner-project",
+              query: "webhook",
+              matchedFiles: ["service/src/github/webhookHandler.ts"],
+              warnings: ["CodeGraph uses tree-sitter approximation; use text search for exhaustive impact checks."]
+            }
           },
           proposedActions: []
         }
@@ -62,6 +70,8 @@ describe("comment renderer", () => {
     const markdown = renderGovernanceComment(response);
 
     expect(markdown).toContain("Issue 智能治理结果");
+    expect(markdown).toContain("仓库上下文");
+    expect(markdown).toContain("service/src/github/webhookHandler.ts");
     expect(markdown).toContain("安全声明");
     expect(markdown).toContain("不会自动关闭");
   });

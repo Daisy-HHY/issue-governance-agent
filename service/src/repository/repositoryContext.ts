@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -30,9 +30,13 @@ const STOP_WORDS = new Set([
 ]);
 
 export type RepositoryContextStatus = "used" | "missing" | "failed";
+export type RepositoryContextProviderName = "auto" | "skill" | "mcp" | "cli";
+export type ResolvedRepositoryContextProvider = "skill" | "mcp" | "cli" | "filesystem" | "none";
 export type ContextSourceType =
   | "project_profile"
   | "codegraph"
+  | "codegraph_mcp"
+  | "codegraph_skill"
   | "readme"
   | "source_file"
   | "file_list";
@@ -43,6 +47,7 @@ export interface ContextSource {
   path?: string;
   query?: string;
   message?: string;
+  provider?: ResolvedRepositoryContextProvider;
 }
 
 export interface CommandResult {
@@ -91,20 +96,66 @@ export interface RelevantRepositoryContext {
   repoPath: string;
   query: string;
   keywords: string[];
+  provider: ResolvedRepositoryContextProvider;
   projectProfile: string;
   codeContext: string;
   fileList: string[];
+  matchedFiles: string[];
+  warnings: string[];
   contextSources: ContextSource[];
   truncated: boolean;
 }
 
 export interface RepositoryContextOptions {
   runner?: CommandRunner;
+  provider?: RepositoryContextProviderName;
+  skillEndpoint?: string;
+  skillRequester?: CodeGraphSkillRequester;
+  mcpCommand?: string;
+  mcpArgs?: string[];
+  mcpRequester?: CodeGraphMcpRequester;
+  mcpMaxFiles?: number;
   timeoutMs?: number;
   profileLimit?: number;
   codeContextLimit?: number;
   fileListLimit?: number;
 }
+
+export interface CodeGraphSkillRequest {
+  repoPath: string;
+  query: string;
+  issue: IssueContextInput | string;
+  codeContextLimit: number;
+}
+
+export interface CodeGraphSkillResponse {
+  codeContext?: string;
+  matchedFiles?: string[];
+  warnings?: string[];
+}
+
+export type CodeGraphSkillRequester = (
+  endpoint: string,
+  request: CodeGraphSkillRequest,
+  timeoutMs: number
+) => Promise<CodeGraphSkillResponse>;
+
+export interface CodeGraphMcpRequest {
+  repoPath: string;
+  query: string;
+  codeContextLimit: number;
+  maxFiles: number;
+}
+
+export interface CodeGraphMcpResponse {
+  codeContext?: string;
+  warnings?: string[];
+}
+
+export type CodeGraphMcpRequester = (
+  request: CodeGraphMcpRequest,
+  options: RepositoryContextOptions
+) => Promise<CodeGraphMcpResponse>;
 
 interface ExecFileError extends Error {
   code?: number | string;
@@ -116,6 +167,23 @@ interface ExecFileError extends Error {
 interface TruncatedText {
   text: string;
   truncated: boolean;
+}
+
+interface JsonRpcError {
+  code?: number;
+  message?: string;
+}
+
+interface JsonRpcResponse {
+  jsonrpc?: string;
+  id?: number | string | null;
+  result?: unknown;
+  error?: JsonRpcError;
+}
+
+interface McpTextContent {
+  type?: string;
+  text?: string;
 }
 
 /**
@@ -344,57 +412,499 @@ export async function queryRelevantContext(
 ): Promise<RelevantRepositoryContext> {
   const resolvedRepoPath = path.resolve(repoPath);
   const profile = await loadProjectProfile(resolvedRepoPath, options);
-  const codeGraph = await ensureCodeGraph(resolvedRepoPath, options);
   const keywords = extractIssueKeywords(issue);
   const query = keywords.join(" ");
   const codeContextLimit = options.codeContextLimit ?? DEFAULT_CODE_CONTEXT_LIMIT;
   const fileListLimit = options.fileListLimit ?? DEFAULT_FILE_LIST_LIMIT;
-  const contextSources = [profile.source, codeGraph.source];
+  const contextSources = [profile.source];
   const fileList = await listRepositoryFiles(resolvedRepoPath, fileListLimit);
+  const warnings: string[] = [];
   contextSources.push({
     type: "file_list",
     status: fileList.length > 0 ? "used" : "missing",
     path: resolvedRepoPath,
+    provider: "filesystem",
     message: fileList.length > 0 ? `Loaded ${fileList.length} repository files` : "No repository files found"
   });
 
-  let codeContext = "";
-  let codeContextTruncated = false;
+  const provider = options.provider ?? "auto";
+  const skillEndpoint = options.skillEndpoint?.trim();
+  const shouldUseSkill = provider === "skill" || (provider === "auto" && skillEndpoint);
+  const shouldUseMcp = provider === "mcp" || provider === "auto";
+  const shouldUseCli = provider === "cli" || provider === "auto";
 
-  if (codeGraph.status === "used") {
-    const runner = options.runner ?? runCommand;
-    const command = await runner("codegraph", ["explore", query], {
-      cwd: resolvedRepoPath,
-      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS
-    });
-    const status = getCommandStatus(command);
-    const truncated = truncateText(command.stdout, codeContextLimit);
-    codeContext = status === "used" ? truncated.text : "";
-    codeContextTruncated = truncated.truncated;
-    contextSources.push({
-      type: "codegraph",
-      status,
-      path: resolvedRepoPath,
+  if (shouldUseSkill) {
+    if (!skillEndpoint) {
+      const message = "CodeGraph skill provider is not configured";
+      warnings.push(message);
+      contextSources.push({
+        type: "codegraph_skill",
+        status: "failed",
+        path: resolvedRepoPath,
+        query,
+        provider: "skill",
+        message
+      });
+
+      return buildRepositoryContextResult({
+        resolvedRepoPath,
+        query,
+        keywords,
+        profile,
+        fileList,
+        provider: "none",
+        codeContext: "",
+        matchedFiles: inferMatchedFiles(fileList, "", keywords),
+        warnings,
+        contextSources,
+        codeContextTruncated: false
+      });
+    }
+
+    const skillContext = await queryCodeGraphSkill(
+      skillEndpoint,
+      {
+        repoPath: resolvedRepoPath,
+        query,
+        issue,
+        codeContextLimit
+      },
+      options
+    );
+    contextSources.push(skillContext.source);
+    warnings.push(...skillContext.warnings);
+
+    return buildRepositoryContextResult({
+      resolvedRepoPath,
       query,
-      message:
-        status === "used"
-          ? codeContextTruncated
-            ? `CodeGraph context truncated to ${codeContextLimit} characters`
-            : "CodeGraph context loaded"
-          : command.message ?? command.stderr
+      keywords,
+      profile,
+      fileList,
+      provider: "skill",
+      codeContext: skillContext.codeContext,
+      matchedFiles:
+        skillContext.matchedFiles.length > 0
+          ? skillContext.matchedFiles
+          : inferMatchedFiles(fileList, skillContext.codeContext, keywords),
+      warnings,
+      contextSources,
+      codeContextTruncated: false
     });
   }
 
-  return {
-    repoPath: resolvedRepoPath,
+  if (provider === "auto" && !skillEndpoint) {
+    warnings.push("CodeGraph skill provider is unavailable; MCP provider will be used before CLI fallback.");
+  }
+
+  if (shouldUseMcp) {
+    const mcpContext = await queryMcpCodeGraphContext(
+      resolvedRepoPath,
+      query,
+      codeContextLimit,
+      options
+    );
+    contextSources.push(...mcpContext.sources);
+    warnings.push(...mcpContext.warnings);
+
+    if (provider === "mcp" || mcpContext.provider === "mcp") {
+      return buildRepositoryContextResult({
+        resolvedRepoPath,
+        query,
+        keywords,
+        profile,
+        fileList,
+        provider: mcpContext.provider,
+        codeContext: mcpContext.codeContext,
+        matchedFiles: inferMatchedFiles(fileList, mcpContext.codeContext, keywords),
+        warnings,
+        contextSources,
+        codeContextTruncated: mcpContext.truncated
+      });
+    }
+
+    warnings.push("CodeGraph MCP provider failed; CLI fallback was used.");
+  }
+
+  if (shouldUseCli) {
+    const cliContext = await queryCliCodeGraphContext(
+      resolvedRepoPath,
+      query,
+      codeContextLimit,
+      options
+    );
+    contextSources.push(...cliContext.sources);
+    warnings.push(...cliContext.warnings);
+    return buildRepositoryContextResult({
+      resolvedRepoPath,
+      query,
+      keywords,
+      profile,
+      fileList,
+      provider: cliContext.provider,
+      codeContext: cliContext.codeContext,
+      matchedFiles: inferMatchedFiles(fileList, cliContext.codeContext, keywords),
+      warnings,
+      contextSources,
+      codeContextTruncated: cliContext.truncated
+    });
+  }
+
+  warnings.push("No repository context provider was available.");
+  return buildRepositoryContextResult({
+    resolvedRepoPath,
     query,
     keywords,
-    projectProfile: profile.content,
-    codeContext,
+    profile,
     fileList,
+    provider: "filesystem",
+    codeContext: "",
+    matchedFiles: inferMatchedFiles(fileList, "", keywords),
+    warnings,
     contextSources,
-    truncated: profile.truncated || codeContextTruncated
+    codeContextTruncated: false
+  });
+}
+
+async function queryMcpCodeGraphContext(
+  resolvedRepoPath: string,
+  query: string,
+  codeContextLimit: number,
+  options: RepositoryContextOptions
+): Promise<{
+  provider: ResolvedRepositoryContextProvider;
+  codeContext: string;
+  sources: ContextSource[];
+  warnings: string[];
+  truncated: boolean;
+}> {
+  const codeGraph = await ensureCodeGraph(resolvedRepoPath, options);
+  const sources = [codeGraph.source];
+  const warnings = ["CodeGraph MCP uses tree-sitter approximation; use text search for exhaustive impact checks."];
+  let codeContext = "";
+  let codeContextTruncated = false;
+
+  if (codeGraph.status !== "used") {
+    return {
+      provider: "filesystem",
+      codeContext,
+      sources,
+      warnings,
+      truncated: codeContextTruncated
+    };
+  }
+
+  try {
+    const requester = options.mcpRequester ?? requestCodeGraphMcpContext;
+    const response = await requester(
+      {
+        repoPath: resolvedRepoPath,
+        query,
+        codeContextLimit,
+        maxFiles: options.mcpMaxFiles ?? 8
+      },
+      options
+    );
+    const truncated = truncateText(response.codeContext ?? "", codeContextLimit);
+    codeContext = truncated.text;
+    codeContextTruncated = truncated.truncated;
+    sources.push({
+      type: "codegraph_mcp",
+      status: "used",
+      path: resolvedRepoPath,
+      query,
+      provider: "mcp",
+      message: codeContextTruncated
+        ? `CodeGraph MCP context truncated to ${codeContextLimit} characters`
+        : "CodeGraph MCP context loaded"
+    });
+    warnings.push(...(response.warnings ?? []));
+
+    return {
+      provider: "mcp",
+      codeContext,
+      sources,
+      warnings,
+      truncated: codeContextTruncated
+    };
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "CodeGraph MCP request failed";
+    sources.push({
+      type: "codegraph_mcp",
+      status: "failed",
+      path: resolvedRepoPath,
+      query,
+      provider: "mcp",
+      message
+    });
+    warnings.push(message);
+
+    return {
+      provider: "filesystem",
+      codeContext,
+      sources,
+      warnings,
+      truncated: codeContextTruncated
+    };
+  }
+}
+
+async function queryCliCodeGraphContext(
+  resolvedRepoPath: string,
+  query: string,
+  codeContextLimit: number,
+  options: RepositoryContextOptions
+): Promise<{
+  provider: ResolvedRepositoryContextProvider;
+  codeContext: string;
+  sources: ContextSource[];
+  warnings: string[];
+  truncated: boolean;
+}> {
+  const codeGraph = await ensureCodeGraph(resolvedRepoPath, options);
+  const sources = [codeGraph.source];
+  const warnings = ["CodeGraph uses tree-sitter approximation; use text search for exhaustive impact checks."];
+  let codeContext = "";
+  let codeContextTruncated = false;
+
+  if (codeGraph.status !== "used") {
+    return {
+      provider: "filesystem",
+      codeContext,
+      sources,
+      warnings,
+      truncated: codeContextTruncated
+    };
+  }
+
+  const runner = options.runner ?? runCommand;
+  const command = await runner("codegraph", ["explore", query], {
+    cwd: resolvedRepoPath,
+    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  });
+  const status = getCommandStatus(command);
+  const truncated = truncateText(command.stdout, codeContextLimit);
+  codeContext = status === "used" ? truncated.text : "";
+  codeContextTruncated = truncated.truncated;
+  sources.push({
+    type: "codegraph",
+    status,
+    path: resolvedRepoPath,
+    query,
+    provider: "cli",
+    message:
+      status === "used"
+        ? codeContextTruncated
+          ? `CodeGraph CLI context truncated to ${codeContextLimit} characters`
+          : "CodeGraph CLI context loaded"
+        : command.message ?? command.stderr
+  });
+
+  return {
+    provider: status === "used" ? "cli" : "filesystem",
+    codeContext,
+    sources,
+    warnings,
+    truncated: codeContextTruncated
   };
+}
+
+async function queryCodeGraphSkill(
+  endpoint: string,
+  request: CodeGraphSkillRequest,
+  options: RepositoryContextOptions
+): Promise<{
+  codeContext: string;
+  matchedFiles: string[];
+  warnings: string[];
+  source: ContextSource;
+}> {
+  try {
+    const requester = options.skillRequester ?? requestCodeGraphSkillContext;
+    const response = await requester(endpoint, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    return {
+      codeContext: response.codeContext ?? "",
+      matchedFiles: response.matchedFiles ?? [],
+      warnings: [
+        "CodeGraph skill is an approximate code graph; use text search for exhaustive impact checks.",
+        ...(response.warnings ?? [])
+      ],
+      source: {
+        type: "codegraph_skill",
+        status: "used",
+        path: request.repoPath,
+        query: request.query,
+        provider: "skill",
+        message: "CodeGraph skill context loaded"
+      }
+    };
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "CodeGraph skill request failed";
+    return {
+      codeContext: "",
+      matchedFiles: [],
+      warnings: [message],
+      source: {
+        type: "codegraph_skill",
+        status: "failed",
+        path: request.repoPath,
+        query: request.query,
+        provider: "skill",
+        message
+      }
+    };
+  }
+}
+
+async function requestCodeGraphSkillContext(
+  endpoint: string,
+  request: CodeGraphSkillRequest,
+  timeoutMs: number
+): Promise<CodeGraphSkillResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(request),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`CodeGraph skill endpoint returned ${response.status}`);
+    }
+
+    return (await response.json()) as CodeGraphSkillResponse;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function requestCodeGraphMcpContext(
+  request: CodeGraphMcpRequest,
+  options: RepositoryContextOptions
+): Promise<CodeGraphMcpResponse> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const command = options.mcpCommand?.trim() || "codegraph";
+  const args = options.mcpArgs?.length ? options.mcpArgs : ["serve", "--mcp"];
+  const child = await spawnMcpServer(command, args, request.repoPath);
+  let stdout = "";
+  let stderr = "";
+  let nextId = 1;
+  const pending = new Map<number, (response: JsonRpcResponse) => void>();
+
+  const cleanup = (): void => {
+    child.stdin.end();
+    if (!child.killed) {
+      child.kill();
+    }
+  };
+
+  const send = (method: string, params?: unknown): number => {
+    const id = nextId++;
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    return id;
+  };
+  const notify = (method: string, params?: unknown): void => {
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+  };
+  const waitForResponse = (id: number): Promise<JsonRpcResponse> =>
+    new Promise((resolve) => {
+      pending.set(id, resolve);
+    });
+
+  child.stdout.on("data", (data: Buffer) => {
+    stdout += data.toString("utf8");
+    let newlineIndex = stdout.indexOf("\n");
+    while (newlineIndex >= 0) {
+      const line = stdout.slice(0, newlineIndex).trim();
+      stdout = stdout.slice(newlineIndex + 1);
+      if (line) {
+        handleJsonRpcLine(line, pending);
+      }
+      newlineIndex = stdout.indexOf("\n");
+    }
+  });
+  child.stderr.on("data", (data: Buffer) => {
+    stderr += data.toString("utf8");
+  });
+
+  try {
+    const initializeId = send("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: {
+        name: "issue-governance-agent",
+        version: "0.1.0"
+      }
+    });
+    const initialize = await withTimeout(waitForResponse(initializeId), timeoutMs, "CodeGraph MCP initialize timed out");
+    throwIfJsonRpcError(initialize, "CodeGraph MCP initialize failed");
+    notify("notifications/initialized", {});
+
+    const toolCallId = send("tools/call", {
+      name: "codegraph_explore",
+      arguments: {
+        query: request.query,
+        projectPath: request.repoPath,
+        maxFiles: request.maxFiles
+      }
+    });
+    const toolCall = await withTimeout(waitForResponse(toolCallId), timeoutMs, "CodeGraph MCP tools/call timed out");
+    throwIfJsonRpcError(toolCall, "CodeGraph MCP tools/call failed");
+
+    return {
+      codeContext: readMcpTextContent(toolCall.result),
+      warnings: stderr.trim() ? [stderr.trim()] : []
+    };
+  } finally {
+    cleanup();
+  }
+}
+
+function buildRepositoryContextResult(input: {
+  resolvedRepoPath: string;
+  query: string;
+  keywords: string[];
+  profile: ProjectProfile;
+  fileList: string[];
+  provider: ResolvedRepositoryContextProvider;
+  codeContext: string;
+  matchedFiles: string[];
+  warnings: string[];
+  contextSources: ContextSource[];
+  codeContextTruncated: boolean;
+}): RelevantRepositoryContext {
+  return {
+    repoPath: input.resolvedRepoPath,
+    query: input.query,
+    keywords: input.keywords,
+    provider: input.provider,
+    projectProfile: input.profile.content,
+    codeContext: input.codeContext,
+    fileList: input.fileList,
+    matchedFiles: input.matchedFiles,
+    warnings: unique(input.warnings.filter(Boolean)),
+    contextSources: input.contextSources,
+    truncated: input.profile.truncated || input.codeContextTruncated
+  };
+}
+
+function inferMatchedFiles(fileList: string[], codeContext: string, keywords: string[]): string[] {
+  const loweredCodeContext = codeContext.toLowerCase();
+  const loweredKeywords = keywords.map((keyword) => keyword.toLowerCase());
+  const fromCodeContext = fileList.filter((filePath) =>
+    loweredCodeContext.includes(filePath.toLowerCase())
+  );
+  const fromKeywords = fileList.filter((filePath) => {
+    const loweredPath = filePath.toLowerCase();
+    return loweredKeywords.some((keyword) => loweredPath.includes(keyword));
+  });
+
+  return unique([...fromCodeContext, ...fromKeywords]).slice(0, 10);
 }
 
 /**
@@ -459,6 +969,26 @@ async function runCommand(
   }
 }
 
+async function spawnMcpServer(command: string, args: string[], cwd: string) {
+  if (process.platform !== "win32") {
+    return spawn(command, args, {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true
+    });
+  }
+
+  return spawn(
+    process.env.ComSpec ?? "cmd.exe",
+    ["/d", "/c", [command, ...args].map(quoteWindowsMcpArgument).join(" ")],
+    {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true
+    }
+  );
+}
+
 async function resolveWindowsCommand(command: string, cwd: string): Promise<string> {
   if (path.isAbsolute(command)) {
     return command;
@@ -481,6 +1011,53 @@ async function resolveWindowsCommand(command: string, cwd: string): Promise<stri
   }
 
   return command;
+}
+
+function handleJsonRpcLine(line: string, pending: Map<number, (response: JsonRpcResponse) => void>): void {
+  const message = JSON.parse(line) as JsonRpcResponse;
+  if (typeof message.id !== "number") {
+    return;
+  }
+
+  const resolve = pending.get(message.id);
+  if (resolve) {
+    pending.delete(message.id);
+    resolve(message);
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function throwIfJsonRpcError(response: JsonRpcResponse, fallbackMessage: string): void {
+  if (response.error) {
+    throw new Error(response.error.message ?? fallbackMessage);
+  }
+}
+
+function readMcpTextContent(result: unknown): string {
+  if (!isRecord(result) || !Array.isArray(result.content)) {
+    return "";
+  }
+
+  return result.content
+    .map((item: unknown) => (isMcpTextContent(item) && item.type === "text" ? item.text ?? "" : ""))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function isMcpTextContent(value: unknown): value is McpTextContent {
+  return isRecord(value) && (value.type === undefined || typeof value.type === "string");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function getCommandStatus(command: CommandResult): RepositoryContextStatus {
@@ -618,4 +1195,12 @@ function toMarkdownPath(filePath: string): string {
 function quoteWindowsCommandLine(parts: string[]): string {
   const quotedParts = parts.map((part) => `"${part.replace(/(["^&|<>%])/g, "^$1")}"`).join(" ");
   return `"${quotedParts}"`;
+}
+
+function quoteWindowsMcpArgument(part: string): string {
+  if (/^[A-Za-z0-9_./:\\-]+$/.test(part)) {
+    return part;
+  }
+
+  return `"${part.replace(/"/g, '\\"')}"`;
 }

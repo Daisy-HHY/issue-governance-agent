@@ -8,6 +8,8 @@ export interface RepositoryPathResolverOptions {
   fallbackRepositoryPath?: string;
   repositoryContextRoot?: string;
   autoClone?: boolean;
+  refresh?: "never" | "ttl" | "always";
+  refreshTtlSeconds?: number;
   cloneTokenProvider?: (repoFullName: string) => Promise<string>;
   cloneCommandRunner?: CloneCommandRunner;
   cloneTimeoutMs?: number;
@@ -166,11 +168,15 @@ async function resolveClonedRepositoryPath(
   );
 
   if (await isDirectory(targetPath)) {
+    const refreshMessage = await refreshClonedRepository(repository, targetPath, options);
     return {
       repository,
       repositoryPath: targetPath,
       source: "clone",
-      message: "Repository context path resolved from auto-clone cache"
+      message: [
+        "Repository context path resolved from auto-clone cache",
+        refreshMessage
+      ].filter(Boolean).join("; ")
     };
   }
 
@@ -185,6 +191,73 @@ async function resolveClonedRepositoryPath(
   cloneLocks.set(targetPath, cloneTask);
 
   return cloneTask;
+}
+
+async function refreshClonedRepository(
+  repoFullName: string,
+  targetPath: string,
+  options: RepositoryPathResolverOptions
+): Promise<string> {
+  const refresh = options.refresh ?? "never";
+  if (refresh === "never" || !(await shouldRefreshRepository(targetPath, refresh, options))) {
+    return "";
+  }
+
+  try {
+    const token = options.cloneTokenProvider ? await options.cloneTokenProvider(repoFullName) : "";
+    const args = [
+      ...(token ? ["-c", `http.extraheader=${createGitAuthHeader(token)}`] : []),
+      "pull",
+      "--ff-only",
+      "--depth",
+      "1"
+    ];
+    const runner = options.cloneCommandRunner ?? runCloneCommand;
+    const result = await runner("git", args, {
+      cwd: targetPath,
+      timeoutMs: options.cloneTimeoutMs ?? DEFAULT_CLONE_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0",
+        GCM_INTERACTIVE: "Never"
+      }
+    });
+
+    if (result.exitCode !== 0) {
+      return `Repository refresh failed: ${sanitizeCloneFailure(result.stderr || result.stdout)}`;
+    }
+
+    return "Repository cache refreshed";
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "Repository refresh failed";
+    return `Repository refresh failed: ${sanitizeCloneFailure(message)}`;
+  }
+}
+
+async function shouldRefreshRepository(
+  targetPath: string,
+  refresh: "never" | "ttl" | "always",
+  options: RepositoryPathResolverOptions
+): Promise<boolean> {
+  if (refresh === "always") {
+    return true;
+  }
+
+  if (refresh !== "ttl") {
+    return false;
+  }
+
+  const ttlMs = (options.refreshTtlSeconds ?? 300) * 1000;
+  if (ttlMs <= 0) {
+    return true;
+  }
+
+  try {
+    const fetchHead = await fs.stat(path.join(targetPath, ".git", "FETCH_HEAD"));
+    return Date.now() - fetchHead.mtimeMs > ttlMs;
+  } catch {
+    return true;
+  }
 }
 
 async function cloneRepository(

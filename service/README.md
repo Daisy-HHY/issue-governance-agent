@@ -56,6 +56,15 @@ OPENAI_MODEL=gpt-4.1-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 REPOSITORY_CONTEXT_MAP=
 REPOSITORY_CONTEXT_PATH=
+REPOSITORY_CONTEXT_ROOT=
+REPOSITORY_CONTEXT_PROVIDER=mcp
+CODEGRAPH_SKILL_ENDPOINT=
+CODEGRAPH_MCP_COMMAND=codegraph
+CODEGRAPH_MCP_ARGS=serve,--mcp
+CODEGRAPH_MCP_MAX_FILES=8
+REPOSITORY_CONTEXT_REFRESH=ttl
+REPOSITORY_CONTEXT_REFRESH_TTL_SECONDS=300
+REPOSITORY_CONTEXT_AUTO_CLONE=true
 LOG_LEVEL=info
 ```
 
@@ -71,11 +80,12 @@ REPOSITORY_CONTEXT_MAP=owner1/repo1=D:\project\repo1,owner2/repo2=D:\project\rep
 
 ```text
 REPOSITORY_CONTEXT_MAP 精确命中
+  -> REPOSITORY_CONTEXT_AUTO_CLONE + REPOSITORY_CONTEXT_ROOT 自动 clone 当前 owner/repo
   -> REPOSITORY_CONTEXT_PATH fallback
   -> 无仓库上下文，基础治理继续执行
 ```
 
-当前版本不会自动 clone GitHub 仓库。需要先把目标仓库 clone 到本机，再把 `owner/repo` 映射到对应本地目录。
+上下文查询优先使用 `REPOSITORY_CONTEXT_PROVIDER=mcp`，服务运行时会启动 `CODEGRAPH_MCP_COMMAND` + `CODEGRAPH_MCP_ARGS`，通过 stdio MCP 调用 `codegraph_explore`。`auto` 模式下会优先 HTTP skill endpoint，其次 CodeGraph MCP，最后回退本机 CLI。
 
 ## 常用命令
 

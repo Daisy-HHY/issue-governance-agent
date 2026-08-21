@@ -36,9 +36,12 @@ describe("IssueGovernanceService", () => {
         repoPath,
         query: "webhook backend",
         keywords: ["webhook", "backend"],
+        provider: "cli",
         projectProfile: "Project profile summary",
         codeContext: "service/src/index.ts",
         fileList: ["service/src/index.ts"],
+        matchedFiles: ["service/src/index.ts"],
+        warnings: ["CodeGraph uses tree-sitter approximation; use text search for exhaustive impact checks."],
         truncated: false,
         contextSources: [
           {
@@ -90,9 +93,12 @@ describe("IssueGovernanceService", () => {
       repoPath,
       query: "简历压缩",
       keywords: ["简历压缩"],
+      provider: "filesystem",
       projectProfile: "",
       codeContext: "No relevant code found for \"简历压缩\"",
       fileList: ["docs/app.js", "lib/editor-document.mjs", "assets/minimal-blue-business.png"],
+      matchedFiles: [],
+      warnings: ["CodeGraph skill provider is unavailable; CLI fallback was used."],
       truncated: false,
       contextSources: [{ type: "file_list", status: "used", path: repoPath }]
     }));

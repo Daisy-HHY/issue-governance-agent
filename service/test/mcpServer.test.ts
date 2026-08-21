@@ -73,9 +73,12 @@ describe("mcp server helpers", () => {
         repoPath,
         query: "",
         keywords: [],
+        provider: "cli",
         projectProfile: "",
         codeContext: "context",
         fileList: [],
+        matchedFiles: [],
+        warnings: [],
         contextSources: [],
         truncated: false
       };

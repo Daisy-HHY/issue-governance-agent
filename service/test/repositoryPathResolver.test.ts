@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -119,5 +119,37 @@ describe("repository path resolver", () => {
 
     expect(result.repositoryPath).toBe(path.resolve("D:/project/fallback"));
     expect(result.source).toBe("fallback");
+  });
+
+  it("refreshes an existing auto-clone cache when configured", async () => {
+    const rootPath = mkdtempSync(path.join(tmpdir(), "issue-governance-repos-"));
+    const targetPath = path.resolve(rootPath, "owner", "repo");
+    mkdirSync(path.join(targetPath, ".git"), { recursive: true });
+    const calls: string[][] = [];
+
+    const result = await resolveRepositoryPathForContext("owner/repo", {
+      repositoryContextRoot: rootPath,
+      autoClone: true,
+      refresh: "always",
+      cloneTokenProvider: async () => "token-for-test",
+      cloneCommandRunner: async (command, args) => {
+        calls.push([command, ...args]);
+        return { exitCode: 0, stdout: "updated", stderr: "" };
+      }
+    });
+
+    expect(result.repositoryPath).toBe(targetPath);
+    expect(result.message).toContain("Repository cache refreshed");
+    expect(calls).toEqual([
+      [
+        "git",
+        "-c",
+        `http.extraheader=AUTHORIZATION: basic ${Buffer.from("x-access-token:token-for-test").toString("base64")}`,
+        "pull",
+        "--ff-only",
+        "--depth",
+        "1"
+      ]
+    ]);
   });
 });

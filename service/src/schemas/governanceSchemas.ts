@@ -102,7 +102,17 @@ export const riskReportSchema = z.object({
   level: riskLevelSchema,
   reasons: z.array(z.string()).default([]),
   impactScope: z.array(z.string()).default([]),
-  suggestion: z.string().default("")
+  suggestion: z.string().default(""),
+  contextSummary: z
+    .object({
+      provider: z.enum(["skill", "mcp", "cli", "filesystem", "none"]),
+      status: z.enum(["used", "missing", "failed"]),
+      repositoryPath: z.string().optional(),
+      query: z.string().default(""),
+      matchedFiles: z.array(z.string()).default([]),
+      warnings: z.array(z.string()).default([])
+    })
+    .optional()
 });
 
 export const proposedActionSchema = z.object({

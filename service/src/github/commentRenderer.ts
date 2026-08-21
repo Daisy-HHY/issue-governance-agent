@@ -68,8 +68,45 @@ function renderIssue(issue: GovernanceResult): string[] {
       ? issue.testPoints.map((point) => `- ${point}`).join("\n")
       : "本次未生成测试点。",
     "",
+    "#### 仓库上下文",
+    renderContextSummary(issue),
+    "",
     "#### 风险报告",
     issue.riskReport.reasons.map((reason) => `- ${reason}`).join("\n"),
     issue.riskReport.suggestion ? `建议：${issue.riskReport.suggestion}` : ""
   ];
+}
+
+function renderContextSummary(issue: GovernanceResult): string {
+  const summary = issue.riskReport.contextSummary;
+  if (!summary) {
+    return "未记录仓库上下文状态。";
+  }
+
+  const matchedFiles =
+    summary.matchedFiles.length > 0
+      ? summary.matchedFiles.map((filePath) => `  - ${filePath}`).join("\n")
+      : "  - 未命中具体文件";
+  const warnings =
+    summary.warnings.length > 0
+      ? summary.warnings.map((warning) => `  - ${warning}`).join("\n")
+      : "  - 无";
+
+  return [
+    `- 来源：${summary.provider}`,
+    `- 状态：${summary.status}`,
+    summary.repositoryPath ? `- 路径：${renderRepositoryPath(summary.repositoryPath)}` : "",
+    summary.query ? `- 查询：${summary.query}` : "",
+    "- 命中文件：",
+    matchedFiles,
+    "- 注意事项：",
+    warnings
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function renderRepositoryPath(repositoryPath: string): string {
+  const segments = repositoryPath.split(/[\\/]/).filter(Boolean);
+  return segments.length >= 2 ? `.../${segments.slice(-2).join("/")}` : repositoryPath;
 }

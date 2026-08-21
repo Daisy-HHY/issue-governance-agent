@@ -19,6 +19,13 @@ const env: AppEnv = {
   REPOSITORY_CONTEXT_MAP: "owner/project=D:/project/uumit-project",
   REPOSITORY_CONTEXT_PATH: "D:/project/issue-governance-agent",
   REPOSITORY_CONTEXT_ROOT: "",
+  REPOSITORY_CONTEXT_PROVIDER: "auto",
+  CODEGRAPH_SKILL_ENDPOINT: "",
+  CODEGRAPH_MCP_COMMAND: "codegraph",
+  CODEGRAPH_MCP_ARGS: "serve,--mcp",
+  CODEGRAPH_MCP_MAX_FILES: 8,
+  REPOSITORY_CONTEXT_REFRESH: "never",
+  REPOSITORY_CONTEXT_REFRESH_TTL_SECONDS: 300,
   REPOSITORY_CONTEXT_AUTO_CLONE: false,
   LOG_LEVEL: "info"
 };

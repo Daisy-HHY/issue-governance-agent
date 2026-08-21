@@ -16,6 +16,13 @@ const envSchema = z.object({
   REPOSITORY_CONTEXT_MAP: z.string().default(""),
   REPOSITORY_CONTEXT_PATH: z.string().default(""),
   REPOSITORY_CONTEXT_ROOT: z.string().default(""),
+  REPOSITORY_CONTEXT_PROVIDER: z.enum(["auto", "skill", "mcp", "cli"]).default("auto"),
+  CODEGRAPH_SKILL_ENDPOINT: z.string().default(""),
+  CODEGRAPH_MCP_COMMAND: z.string().default("codegraph"),
+  CODEGRAPH_MCP_ARGS: z.string().default("serve,--mcp"),
+  CODEGRAPH_MCP_MAX_FILES: z.coerce.number().int().positive().default(8),
+  REPOSITORY_CONTEXT_REFRESH: z.enum(["never", "ttl", "always"]).default("never"),
+  REPOSITORY_CONTEXT_REFRESH_TTL_SECONDS: z.coerce.number().int().nonnegative().default(300),
   REPOSITORY_CONTEXT_AUTO_CLONE: z.preprocess((value) => {
     if (typeof value !== "string") {
       return value;

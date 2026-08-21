@@ -370,7 +370,27 @@ function buildRiskReport(
     level,
     reasons: reasons.length > 0 ? reasons : ["当前描述未暴露明显高风险链路。"],
     impactScope: [normalized.module],
-    suggestion: normalized.clarityScore < 0.5 ? "先补充关键信息，再执行开发或自动化治理。" : "保持人工确认后再执行写操作。"
+    suggestion: normalized.clarityScore < 0.5 ? "先补充关键信息，再执行开发或自动化治理。" : "保持人工确认后再执行写操作。",
+    contextSummary: repositoryContext
+      ? {
+          provider: repositoryContext.provider,
+          status: repositoryContext.contextSources.some((source) => source.status === "used")
+            ? "used"
+            : repositoryContext.contextSources.some((source) => source.status === "failed")
+              ? "failed"
+              : "missing",
+          repositoryPath: repositoryContext.repoPath,
+          query: repositoryContext.query,
+          matchedFiles: repositoryContext.matchedFiles,
+          warnings: repositoryContext.warnings
+        }
+      : {
+          provider: "none",
+          status: "missing",
+          query: "",
+          matchedFiles: [],
+          warnings: ["Repository context was not configured for this request."]
+        }
   };
 }
 
@@ -524,6 +544,6 @@ function jaccard(left: Set<string>, right: Set<string>): number {
 }
 
 function formatContextSource(source: ContextSource): string {
-  const details = [source.path, source.query, source.message].filter(Boolean).join(" | ");
+  const details = [source.provider, source.path, source.query, source.message].filter(Boolean).join(" | ");
   return `- ${source.type}: ${source.status}${details ? ` | ${details}` : ""}`;
 }
